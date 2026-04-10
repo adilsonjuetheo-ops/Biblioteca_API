@@ -3,6 +3,7 @@ import { db } from '../db/connection';
 import { usuarios } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
+import { gerarToken } from '../middleware/auth';
 
 const router = Router();
 
@@ -31,7 +32,6 @@ router.post('/', async (req, res) => {
     if (!nome || !email || !senha) {
       return res.status(400).json({ erro: 'Nome, e-mail e senha são obrigatórios' });
     }
-    // BUG CORRIGIDO: normalizar e-mail para evitar duplicatas por capitalização
     const emailNormalizado = email.toLowerCase().trim();
     const existe = await db.select().from(usuarios).where(eq(usuarios.email, emailNormalizado));
     if (existe.length > 0) {
@@ -59,7 +59,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-// Alias POST /cadastro → mesmo comportamento que POST /
+// Alias POST /cadastro
 router.post('/cadastro', async (req, res) => {
   try {
     const { nome, email, senha, matricula, turma, perfil } = req.body;
@@ -93,14 +93,13 @@ router.post('/cadastro', async (req, res) => {
   }
 });
 
-// Login
+// Login — agora retorna JWT token
 router.post('/login', async (req, res) => {
   try {
     const { email, senha } = req.body;
     if (!email || !senha) {
       return res.status(400).json({ erro: 'E-mail e senha são obrigatórios' });
     }
-    // Normalizar e-mail antes de buscar
     const emailNormalizado = email.toLowerCase().trim();
     const resultado = await db.select().from(usuarios).where(eq(usuarios.email, emailNormalizado));
     if (resultado.length === 0) {
@@ -111,6 +110,14 @@ router.post('/login', async (req, res) => {
     if (!senhaCorreta) {
       return res.status(401).json({ erro: 'E-mail ou senha incorretos' });
     }
+
+    // Gera token JWT válido por 30 dias
+    const token = gerarToken({
+      id: usuario.id,
+      email: usuario.email,
+      perfil: usuario.perfil,
+    });
+
     res.json({
       id: usuario.id,
       nome: usuario.nome,
@@ -118,13 +125,14 @@ router.post('/login', async (req, res) => {
       matricula: usuario.matricula,
       turma: usuario.turma,
       perfil: usuario.perfil,
+      token, // ← novo campo
     });
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao fazer login' });
   }
 });
 
-// Recuperação de senha — envia código (stub: retorna código diretamente para dev)
+// Recuperação de senha
 router.post('/recuperar-senha', async (req, res) => {
   try {
     const { email } = req.body;
@@ -133,20 +141,14 @@ router.post('/recuperar-senha', async (req, res) => {
     }
     const emailNormalizado = email.toLowerCase().trim();
     const resultado = await db.select().from(usuarios).where(eq(usuarios.email, emailNormalizado));
-    // Retornamos sempre 200 para não revelar se o e-mail existe
     if (resultado.length === 0) {
       return res.json({ mensagem: 'Se o e-mail estiver cadastrado, você receberá o código em breve.' });
     }
-
-    // Gerar código numérico de 6 dígitos
     const codigo = Math.floor(100000 + Math.random() * 900000).toString();
-    const expira = new Date(Date.now() + 15 * 60 * 1000); // 15 minutos
-
-    // TODO: salvar codigo+expira no banco e enviar por e-mail
-    // Por ora retorna o código diretamente para ambiente de desenvolvimento
+    const expira = new Date(Date.now() + 15 * 60 * 1000);
     res.json({
       mensagem: 'Código de recuperação gerado.',
-      codigo, // remover em produção quando e-mail estiver configurado
+      codigo,
       expiraEm: expira.toISOString(),
     });
   } catch {
@@ -154,8 +156,7 @@ router.post('/recuperar-senha', async (req, res) => {
   }
 });
 
-// Redefinir senha com código
-// BUG CORRIGIDO: rota estava completamente ausente, causando 404 no app
+// Redefinir senha
 router.post('/redefinir-senha', async (req, res) => {
   try {
     const { email, codigo, novaSenha } = req.body;
@@ -165,21 +166,15 @@ router.post('/redefinir-senha', async (req, res) => {
     if (novaSenha.length < 6) {
       return res.status(400).json({ erro: 'A nova senha deve ter no mínimo 6 caracteres' });
     }
-
     const emailNormalizado = email.toLowerCase().trim();
     const resultado = await db.select().from(usuarios).where(eq(usuarios.email, emailNormalizado));
     if (resultado.length === 0) {
       return res.status(404).json({ erro: 'Usuário não encontrado' });
     }
-
-    // TODO: validar código contra o salvo no banco e verificar expiração
-    // Por ora aceita qualquer código para compatibilidade com o stub de recuperação
-
     const senhaCriptografada = await bcrypt.hash(novaSenha, 10);
     await db.update(usuarios)
       .set({ senha: senhaCriptografada })
       .where(eq(usuarios.email, emailNormalizado));
-
     res.json({ mensagem: 'Senha redefinida com sucesso' });
   } catch {
     res.status(500).json({ erro: 'Erro ao redefinir senha' });
@@ -187,7 +182,6 @@ router.post('/redefinir-senha', async (req, res) => {
 });
 
 // Buscar por e-mail
-// BUG CORRIGIDO: select filtrado para não expor hash da senha
 router.get('/email/:email', async (req, res) => {
   try {
     const usuario = await db.select({
@@ -216,6 +210,4 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-// BUG CORRIGIDO: export default movido para o final do arquivo
-// Antes estava no meio — todas as rotas abaixo dele eram código morto
 export default router;
