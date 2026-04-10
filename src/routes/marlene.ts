@@ -3,7 +3,7 @@ import express from 'express';
 import Anthropic from '@anthropic-ai/sdk';
 
 const router = express.Router();
-const client = new Anthropic({ apiKey: process.env.EXPO_PUBLIC_ANTHROPIC_API_KEY });
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 router.post('/', async (req, res) => {
   const { system, messages } = req.body;
