@@ -8,8 +8,15 @@ import comunicadosRouter from './routes/comunicados';
 import avaliacoesRouter from './routes/avaliacoes';
 import desejosRouter from './routes/desejos';
 import { pool } from './db/connection';
+import suspensoesRouter from './routes/suspensoes';
+import marleneRouter from './routes/marlene';
 
 dotenv.config();
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
 
 async function runMigrations() {
   try {
@@ -32,18 +39,42 @@ async function runMigrations() {
       'UNIQUE (usuario_id, livro_id)' +
       ')'
     );
-    for (const [col, type] of Object.entries({ retiradaq_r_codigo: 'TEXT', retiradaq_r_payload: 'TEXT', retiradaq_r_gerado_em: 'TIMESTAMP', retiradaq_r_expira_em: 'TIMESTAMP', retiradaq_r_usado_em: 'TIMESTAMP', retiradaq_r_invalidado_em: 'TIMESTAMP' })) {
+    await pool.query(
+  'ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS bloqueado_ate TIMESTAMP'
+);
+    await pool.query(
+  'CREATE TABLE IF NOT EXISTS suspensoes (' +
+  'id SERIAL PRIMARY KEY, ' +
+  'usuario_id INTEGER REFERENCES usuarios(id) ON DELETE CASCADE, ' +
+  'emprestimo_id INTEGER REFERENCES emprestimos(id) ON DELETE CASCADE, ' +
+  'dias INTEGER NOT NULL, ' +
+  'motivo TEXT, ' +
+  'expira_em TIMESTAMP NOT NULL, ' +
+  'criado_em TIMESTAMP DEFAULT NOW()' +
+  ')'
+);
+
+    // BUG CORRIGIDO: nomes das colunas QR corrigidos de retiradaq_r_* para retirada_qr_*
+    // As queries em emprestimos.ts usam retirada_qr_* — os nomes precisam bater
+    for (const [col, type] of Object.entries({
+      retirada_qr_codigo: 'TEXT',
+      retirada_qr_payload: 'TEXT',
+      retirada_qr_gerado_em: 'TIMESTAMP',
+      retirada_qr_expira_em: 'TIMESTAMP',
+      retirada_qr_usado_em: 'TIMESTAMP',
+      retirada_qr_invalidado_em: 'TIMESTAMP',
+    })) {
       await pool.query('ALTER TABLE emprestimos ADD COLUMN IF NOT EXISTS ' + col + ' ' + type);
     }
+
     console.log('[migrations] OK');
   } catch (e) {
     console.error('[migrations] Erro:', e);
+    // BUG CORRIGIDO: em vez de engolir o erro, lançamos para impedir o servidor de subir
+    // com banco incompleto
+    throw e;
   }
 }
-
-const app = express();
-app.use(cors());
-app.use(express.json());
 
 app.get('/', (_req, res) => { res.json({ status: 'API Biblioteca funcionando!' }); });
 
@@ -53,9 +84,19 @@ app.use('/usuarios', usuariosRouter);
 app.use('/comunicados', comunicadosRouter);
 app.use('/avaliacoes', avaliacoesRouter);
 app.use('/desejos', desejosRouter);
-
+app.use('/suspensoes', suspensoesRouter);
+app.use('/api/marlene', marleneRouter);
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log('Servidor rodando na porta ' + PORT);
-  runMigrations();
-});
+
+// BUG CORRIGIDO: migrations rodam ANTES do servidor subir
+// Antes: app.listen primeiro, runMigrations depois — requisições chegavam com banco incompleto
+runMigrations()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log('Servidor rodando na porta ' + PORT);
+    });
+  })
+  .catch((err) => {
+    console.error('Falha nas migrations — servidor não iniciado:', err);
+    process.exit(1);
+  });

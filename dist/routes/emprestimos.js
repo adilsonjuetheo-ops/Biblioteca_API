@@ -10,6 +10,17 @@ const drizzle_orm_1 = require("drizzle-orm");
 const connection_2 = require("../db/connection");
 const crypto_1 = __importDefault(require("crypto"));
 const router = (0, express_1.Router)();
+// Helpers
+function calcularStatus(emp) {
+    if (emp.status === 'devolvido')
+        return 'devolvido';
+    if (emp.status === 'retirado' && emp.dataDevolucao) {
+        const vencimento = new Date(emp.dataDevolucao);
+        if (vencimento < new Date())
+            return 'atrasado';
+    }
+    return emp.status;
+}
 router.get('/', async (req, res) => {
     try {
         const todos = await connection_1.db
@@ -24,6 +35,7 @@ router.get('/', async (req, res) => {
             livroTitulo: schema_1.livros.titulo,
             livroAutor: schema_1.livros.autor,
             livroGenero: schema_1.livros.genero,
+            livroCapa: schema_1.livros.capa,
             usuarioNome: schema_1.usuarios.nome,
             usuarioTurma: schema_1.usuarios.turma,
             usuarioMatricula: schema_1.usuarios.matricula,
@@ -31,7 +43,14 @@ router.get('/', async (req, res) => {
             .from(schema_1.emprestimos)
             .leftJoin(schema_1.livros, (0, drizzle_orm_1.eq)(schema_1.emprestimos.livroId, schema_1.livros.id))
             .leftJoin(schema_1.usuarios, (0, drizzle_orm_1.eq)(schema_1.emprestimos.usuarioId, schema_1.usuarios.id));
-        res.json(todos);
+        // BUG CORRIGIDO: status 'atrasado' calculado dinamicamente
+        // A API nunca setava esse status — empréstimos vencidos ficavam como 'retirado'
+        // e o card "Em atraso" do painel admin sempre mostrava zero
+        const comStatusCalculado = todos.map(emp => ({
+            ...emp,
+            status: calcularStatus(emp),
+        }));
+        res.json(comStatusCalculado);
     }
     catch (err) {
         res.status(500).json({ erro: 'Erro ao buscar empréstimos' });
@@ -69,11 +88,14 @@ router.patch('/:id/devolver', async (req, res) => {
 });
 router.patch('/:id/retirar', async (req, res) => {
     try {
+        // Ao retirar, define automaticamente a data de devolução (8 dias)
+        const dataDevolucao = new Date();
+        dataDevolucao.setDate(dataDevolucao.getDate() + 8);
         const emp = await connection_1.db.update(schema_1.emprestimos)
-            .set({ status: 'retirado', dataRetirada: new Date() })
+            .set({ status: 'retirado', dataRetirada: new Date(), dataDevolucao })
             .where((0, drizzle_orm_1.eq)(schema_1.emprestimos.id, Number(req.params.id)))
             .returning();
-        res.json(emp[0]);
+        res.json({ ...emp[0], status: calcularStatus(emp[0]) });
     }
     catch (err) {
         res.status(500).json({ erro: 'Erro ao registrar retirada' });
@@ -90,23 +112,22 @@ router.patch('/:id/renovar', async (req, res) => {
         if (emp.renovado) {
             return res.status(400).json({ erro: 'Este empréstimo já foi renovado uma vez' });
         }
+        // Permite renovar mesmo se estiver atrasado
         if (emp.status !== 'retirado') {
             return res.status(400).json({ erro: 'Só é possível renovar empréstimos com livro retirado' });
         }
         const novaData = new Date();
-        novaData.setDate(novaData.getDate() + 14);
+        novaData.setDate(novaData.getDate() + 5);
         const atualizado = await connection_1.db.update(schema_1.emprestimos)
             .set({ renovado: true, dataDevolucao: novaData })
             .where((0, drizzle_orm_1.eq)(schema_1.emprestimos.id, Number(req.params.id)))
             .returning();
-        res.json(atualizado[0]);
+        res.json({ ...atualizado[0], status: calcularStatus(atualizado[0]) });
     }
     catch (err) {
         res.status(500).json({ erro: 'Erro ao renovar empréstimo' });
     }
 });
-exports.default = router;
-// PATCH /retirada-qr  — must be registered BEFORE /:id routes in index.ts
 router.patch('/retirada-qr', async (req, res) => {
     try {
         const { codigo } = req.body;
@@ -116,22 +137,26 @@ router.patch('/retirada-qr', async (req, res) => {
        FROM emprestimos e
        LEFT JOIN livros l ON e.livro_id = l.id
        LEFT JOIN usuarios u ON e.usuario_id = u.id
-       WHERE e.retiradaq_r_codigo = $1
+       WHERE e.retirada_qr_codigo = $1
          AND e.status = 'reservado'`, [codigo.trim().toUpperCase()]);
         if (result.rows.length === 0) {
             return res.status(404).json({ erro: 'QR inválido, expirado ou já utilizado' });
         }
         const emp = result.rows[0];
-        if (emp.retiradaq_r_expira_em && new Date(emp.retiradaq_r_expira_em) < new Date()) {
-            await connection_2.pool.query(`UPDATE emprestimos SET retiradaq_r_codigo = NULL WHERE id = $1`, [emp.id]);
+        if (emp.retirada_qr_expira_em && new Date(emp.retirada_qr_expira_em) < new Date()) {
+            await connection_2.pool.query(`UPDATE emprestimos SET retirada_qr_codigo = NULL WHERE id = $1`, [emp.id]);
             return res.status(410).json({ erro: 'QR expirado' });
         }
+        // Define data de devolução ao confirmar retirada via QR (8 dias)
+        const dataDevolucao = new Date();
+        dataDevolucao.setDate(dataDevolucao.getDate() + 8);
         await connection_2.pool.query(`UPDATE emprestimos
        SET status = 'retirado',
            data_retirada = NOW(),
-           retiradaq_r_usado_em = NOW(),
-           retiradaq_r_codigo = NULL
-       WHERE id = $1`, [emp.id]);
+           data_devolucao = $2,
+           retirada_qr_usado_em = NOW(),
+           retirada_qr_codigo = NULL
+       WHERE id = $1`, [emp.id, dataDevolucao]);
         res.json({
             ok: true,
             emprestimo: {
@@ -141,6 +166,7 @@ router.patch('/retirada-qr', async (req, res) => {
                 usuarioNome: emp.usuario_nome,
                 usuarioTurma: emp.usuario_turma,
                 status: 'retirado',
+                dataDevolucao: dataDevolucao.toISOString(),
             },
         });
     }
@@ -160,11 +186,11 @@ router.post('/:id/qr-retirada', async (req, res) => {
         const payload = `BIBLIO:${id}:${codigo}`;
         const expira = new Date(Date.now() + 15 * 60 * 1000);
         await connection_2.pool.query(`UPDATE emprestimos
-       SET retiradaq_r_codigo = $1,
-           retiradaq_r_payload = $2,
-           retiradaq_r_gerado_em = NOW(),
-           retiradaq_r_expira_em = $3,
-           retiradaq_r_usado_em = NULL
+       SET retirada_qr_codigo = $1,
+           retirada_qr_payload = $2,
+           retirada_qr_gerado_em = NOW(),
+           retirada_qr_expira_em = $3,
+           retirada_qr_usado_em = NULL
        WHERE id = $4`, [codigo, payload, expira, id]);
         res.json({ codigo, payload, expiraEm: expira.toISOString() });
     }
@@ -172,3 +198,4 @@ router.post('/:id/qr-retirada', async (req, res) => {
         res.status(500).json({ erro: 'Erro ao gerar QR de retirada' });
     }
 });
+exports.default = router;

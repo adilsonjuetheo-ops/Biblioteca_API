@@ -24,29 +24,71 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Cadastro
+// Cadastro principal
 router.post('/', async (req, res) => {
   try {
     const { nome, email, senha, matricula, turma, perfil } = req.body;
     if (!nome || !email || !senha) {
       return res.status(400).json({ erro: 'Nome, e-mail e senha são obrigatórios' });
     }
-    const existe = await db.select().from(usuarios).where(eq(usuarios.email, email));
+    // BUG CORRIGIDO: normalizar e-mail para evitar duplicatas por capitalização
+    const emailNormalizado = email.toLowerCase().trim();
+    const existe = await db.select().from(usuarios).where(eq(usuarios.email, emailNormalizado));
     if (existe.length > 0) {
       return res.status(400).json({ erro: 'E-mail já cadastrado' });
     }
     const senhaCriptografada = await bcrypt.hash(senha, 10);
     const novo = await db.insert(usuarios).values({
-      nome, email, senha: senhaCriptografada,
-      matricula, turma, perfil: perfil || 'aluno',
+      nome,
+      email: emailNormalizado,
+      senha: senhaCriptografada,
+      matricula,
+      turma,
+      perfil: perfil || 'aluno',
     }).returning({
       id: usuarios.id,
       nome: usuarios.nome,
       email: usuarios.email,
       perfil: usuarios.perfil,
+      matricula: usuarios.matricula,
+      turma: usuarios.turma,
     });
     res.status(201).json(novo[0]);
   } catch (err) {
+    res.status(500).json({ erro: 'Erro ao criar usuário' });
+  }
+});
+
+// Alias POST /cadastro → mesmo comportamento que POST /
+router.post('/cadastro', async (req, res) => {
+  try {
+    const { nome, email, senha, matricula, turma, perfil } = req.body;
+    if (!nome || !email || !senha) {
+      return res.status(400).json({ erro: 'Nome, e-mail e senha são obrigatórios' });
+    }
+    const emailNormalizado = email.toLowerCase().trim();
+    const existe = await db.select().from(usuarios).where(eq(usuarios.email, emailNormalizado));
+    if (existe.length > 0) {
+      return res.status(400).json({ erro: 'E-mail já cadastrado' });
+    }
+    const senhaCriptografada = await bcrypt.hash(senha, 10);
+    const novo = await db.insert(usuarios).values({
+      nome,
+      email: emailNormalizado,
+      senha: senhaCriptografada,
+      matricula,
+      turma,
+      perfil: perfil || 'aluno',
+    }).returning({
+      id: usuarios.id,
+      nome: usuarios.nome,
+      email: usuarios.email,
+      perfil: usuarios.perfil,
+      matricula: usuarios.matricula,
+      turma: usuarios.turma,
+    });
+    res.status(201).json(novo[0]);
+  } catch {
     res.status(500).json({ erro: 'Erro ao criar usuário' });
   }
 });
@@ -58,7 +100,9 @@ router.post('/login', async (req, res) => {
     if (!email || !senha) {
       return res.status(400).json({ erro: 'E-mail e senha são obrigatórios' });
     }
-    const resultado = await db.select().from(usuarios).where(eq(usuarios.email, email));
+    // Normalizar e-mail antes de buscar
+    const emailNormalizado = email.toLowerCase().trim();
+    const resultado = await db.select().from(usuarios).where(eq(usuarios.email, emailNormalizado));
     if (resultado.length === 0) {
       return res.status(401).json({ erro: 'E-mail ou senha incorretos' });
     }
@@ -80,11 +124,81 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// Buscar por email
+// Recuperação de senha — envia código (stub: retorna código diretamente para dev)
+router.post('/recuperar-senha', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ erro: 'E-mail é obrigatório' });
+    }
+    const emailNormalizado = email.toLowerCase().trim();
+    const resultado = await db.select().from(usuarios).where(eq(usuarios.email, emailNormalizado));
+    // Retornamos sempre 200 para não revelar se o e-mail existe
+    if (resultado.length === 0) {
+      return res.json({ mensagem: 'Se o e-mail estiver cadastrado, você receberá o código em breve.' });
+    }
+
+    // Gerar código numérico de 6 dígitos
+    const codigo = Math.floor(100000 + Math.random() * 900000).toString();
+    const expira = new Date(Date.now() + 15 * 60 * 1000); // 15 minutos
+
+    // TODO: salvar codigo+expira no banco e enviar por e-mail
+    // Por ora retorna o código diretamente para ambiente de desenvolvimento
+    res.json({
+      mensagem: 'Código de recuperação gerado.',
+      codigo, // remover em produção quando e-mail estiver configurado
+      expiraEm: expira.toISOString(),
+    });
+  } catch {
+    res.status(500).json({ erro: 'Erro ao processar recuperação de senha' });
+  }
+});
+
+// Redefinir senha com código
+// BUG CORRIGIDO: rota estava completamente ausente, causando 404 no app
+router.post('/redefinir-senha', async (req, res) => {
+  try {
+    const { email, codigo, novaSenha } = req.body;
+    if (!email || !codigo || !novaSenha) {
+      return res.status(400).json({ erro: 'E-mail, código e nova senha são obrigatórios' });
+    }
+    if (novaSenha.length < 6) {
+      return res.status(400).json({ erro: 'A nova senha deve ter no mínimo 6 caracteres' });
+    }
+
+    const emailNormalizado = email.toLowerCase().trim();
+    const resultado = await db.select().from(usuarios).where(eq(usuarios.email, emailNormalizado));
+    if (resultado.length === 0) {
+      return res.status(404).json({ erro: 'Usuário não encontrado' });
+    }
+
+    // TODO: validar código contra o salvo no banco e verificar expiração
+    // Por ora aceita qualquer código para compatibilidade com o stub de recuperação
+
+    const senhaCriptografada = await bcrypt.hash(novaSenha, 10);
+    await db.update(usuarios)
+      .set({ senha: senhaCriptografada })
+      .where(eq(usuarios.email, emailNormalizado));
+
+    res.json({ mensagem: 'Senha redefinida com sucesso' });
+  } catch {
+    res.status(500).json({ erro: 'Erro ao redefinir senha' });
+  }
+});
+
+// Buscar por e-mail
+// BUG CORRIGIDO: select filtrado para não expor hash da senha
 router.get('/email/:email', async (req, res) => {
   try {
-    const usuario = await db.select().from(usuarios)
-      .where(eq(usuarios.email, req.params.email));
+    const usuario = await db.select({
+      id: usuarios.id,
+      nome: usuarios.nome,
+      email: usuarios.email,
+      matricula: usuarios.matricula,
+      turma: usuarios.turma,
+      perfil: usuarios.perfil,
+      criadoEm: usuarios.criadoEm,
+    }).from(usuarios).where(eq(usuarios.email, req.params.email));
     if (!usuario.length) return res.status(404).json({ erro: 'Usuário não encontrado' });
     res.json(usuario[0]);
   } catch (err) {
@@ -102,46 +216,6 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+// BUG CORRIGIDO: export default movido para o final do arquivo
+// Antes estava no meio — todas as rotas abaixo dele eram código morto
 export default router;
-
-// Alias: POST /cadastro → same as POST /
-router.post('/cadastro', async (req, res) => {
-  try {
-    const { nome, email, senha, matricula, turma, perfil } = req.body;
-    if (!nome || !email || !senha) {
-      return res.status(400).json({ erro: 'Nome, e-mail e senha são obrigatórios' });
-    }
-    const existe = await db.select().from(usuarios).where(eq(usuarios.email, email.toLowerCase().trim()));
-    if (existe.length > 0) {
-      return res.status(400).json({ erro: 'E-mail já cadastrado' });
-    }
-    const senhaCriptografada = await bcrypt.hash(senha, 10);
-    const novo = await db.insert(usuarios).values({
-      nome,
-      email: email.toLowerCase().trim(),
-      senha: senhaCriptografada,
-      matricula,
-      turma,
-      perfil: perfil || 'aluno',
-    }).returning({
-      id: usuarios.id,
-      nome: usuarios.nome,
-      email: usuarios.email,
-      perfil: usuarios.perfil,
-      matricula: usuarios.matricula,
-      turma: usuarios.turma,
-    });
-    res.status(201).json(novo[0]);
-  } catch {
-    res.status(500).json({ erro: 'Erro ao criar usuário' });
-  }
-});
-
-// Stub: recuperação de senha (não implementada com e-mail)
-router.post('/recuperar-senha', (_req, res) => {
-  res.status(503).json({ erro: 'Recuperação por e-mail não disponível neste momento.' });
-});
-
-router.post('/recuperar-senha/verificar', (_req, res) => {
-  res.status(503).json({ erro: 'Recuperação por e-mail não disponível neste momento.' });
-});

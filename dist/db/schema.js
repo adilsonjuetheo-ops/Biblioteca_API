@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.desejos = exports.avaliacoes = exports.filaEspera = exports.emprestimosComQr = exports.emprestimos = exports.livros = exports.usuarios = void 0;
+exports.comunicados = exports.desejos = exports.avaliacoes = exports.filaEspera = exports.emprestimosComQr = exports.emprestimos = exports.livros = exports.usuarios = void 0;
 const pg_core_1 = require("drizzle-orm/pg-core");
 exports.usuarios = (0, pg_core_1.pgTable)('usuarios', {
     id: (0, pg_core_1.serial)('id').primaryKey(),
@@ -73,5 +73,13 @@ exports.desejos = (0, pg_core_1.pgTable)('desejos', {
     id: (0, pg_core_1.serial)('id').primaryKey(),
     usuarioId: (0, pg_core_1.integer)('usuario_id').references(() => exports.usuarios.id),
     livroId: (0, pg_core_1.integer)('livro_id').references(() => exports.livros.id),
+    criadoEm: (0, pg_core_1.timestamp)('criado_em').defaultNow(),
+});
+exports.comunicados = (0, pg_core_1.pgTable)('comunicados', {
+    id: (0, pg_core_1.serial)('id').primaryKey(),
+    titulo: (0, pg_core_1.text)('titulo').notNull(),
+    mensagem: (0, pg_core_1.text)('mensagem').notNull(),
+    autor: (0, pg_core_1.text)('autor').notNull(),
+    destinatario: (0, pg_core_1.text)('destinatario').default('todos'),
     criadoEm: (0, pg_core_1.timestamp)('criado_em').defaultNow(),
 });
