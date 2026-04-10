@@ -10,6 +10,7 @@ import desejosRouter from './routes/desejos';
 import { pool } from './db/connection';
 import suspensoesRouter from './routes/suspensoes';
 import marleneRouter from './routes/marlene';
+import scanLivroRouter from './routes/scan-livro';
 
 dotenv.config();
 
@@ -87,6 +88,7 @@ app.use('/avaliacoes', avaliacoesRouter);
 app.use('/desejos', desejosRouter);
 app.use('/suspensoes', suspensoesRouter);
 app.use('/api/marlene', marleneRouter);
+app.use('/api/scan-livro', scanLivroRouter);
 const PORT = process.env.PORT || 3000;
 
 // BUG CORRIGIDO: migrations rodam ANTES do servidor subir
