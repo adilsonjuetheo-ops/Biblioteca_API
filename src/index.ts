@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import livrosRouter from './routes/livros';
@@ -74,59 +74,55 @@ async function runMigrations() {
 
 app.get('/', (_req, res) => { res.json({ status: 'API Biblioteca funcionando!' }); });
 
-// ── ROTAS PÚBLICAS ──
-app.use('/usuarios', usuariosRouter);
+// ── USUÁRIOS — rotas públicas e protegidas ──
+app.use('/usuarios', (req: Request, res: Response, next: NextFunction) => {
+  const rotasPublicas = ['/login', '/cadastro', '/recuperar-senha', '/redefinir-senha'];
+  const ehPublica = rotasPublicas.some(r => req.path.startsWith(r))
+    || (req.method === 'POST' && req.path === '/');
+  if (ehPublica) return next();
+  if (req.method === 'GET' || req.method === 'DELETE') {
+    return autenticarBibliotecario(req, res, next);
+  }
+  next();
+}, usuariosRouter);
 
 // ── LIVROS ──
-// GET /livros → todos autenticados
-// POST, PATCH, DELETE /livros → só bibliotecário
-app.get('/livros', autenticar, (req, res, next) => livrosRouter(req, res, next));
-app.post('/livros', autenticarBibliotecario, (req, res, next) => livrosRouter(req, res, next));
-app.patch('/livros/:id', autenticarBibliotecario, (req, res, next) => livrosRouter(req, res, next));
-app.delete('/livros/:id', autenticarBibliotecario, (req, res, next) => livrosRouter(req, res, next));
+app.use('/livros', autenticar, (req: Request, res: Response, next: NextFunction) => {
+  if (['POST', 'PATCH', 'DELETE'].includes(req.method)) {
+    return autenticarBibliotecario(req, res, next);
+  }
+  next();
+}, livrosRouter);
 
 // ── EMPRÉSTIMOS ──
-// GET /emprestimos → todos autenticados
-// POST /emprestimos → aluno/professor (fazer reserva)
-// PATCH devolver/retirar/retirada-qr → só bibliotecário
-// POST qr-retirada → aluno (gerar QR)
-// PATCH renovar → aluno
-app.get('/emprestimos', autenticar, (req, res, next) => emprestimosRouter(req, res, next));
-app.post('/emprestimos', autenticar, (req, res, next) => emprestimosRouter(req, res, next));
-app.patch('/emprestimos/retirada-qr', autenticarBibliotecario, (req, res, next) => emprestimosRouter(req, res, next));
-app.patch('/emprestimos/:id/devolver', autenticarBibliotecario, (req, res, next) => emprestimosRouter(req, res, next));
-app.patch('/emprestimos/:id/retirar', autenticarBibliotecario, (req, res, next) => emprestimosRouter(req, res, next));
-app.patch('/emprestimos/:id/renovar', autenticar, (req, res, next) => emprestimosRouter(req, res, next));
-app.post('/emprestimos/:id/qr-retirada', autenticar, (req, res, next) => emprestimosRouter(req, res, next));
-
-// ── USUÁRIOS (rotas autenticadas) ──
-// GET /usuarios → só bibliotecário
-app.get('/usuarios', autenticarBibliotecario, (req, res, next) => usuariosRouter(req, res, next));
-app.delete('/usuarios/:id', autenticarBibliotecario, (req, res, next) => usuariosRouter(req, res, next));
+app.use('/emprestimos', autenticar, (req: Request, res: Response, next: NextFunction) => {
+  const rotasBiblio = ['retirada-qr', 'devolver', 'retirar'];
+  const ehRotaBiblio = req.method === 'PATCH' && rotasBiblio.some(r => req.path.includes(r));
+  if (ehRotaBiblio) {
+    return autenticarBibliotecario(req, res, next);
+  }
+  next();
+}, emprestimosRouter);
 
 // ── COMUNICADOS ──
-// GET → todos autenticados
-// POST → só bibliotecário
-app.get('/comunicados', autenticar, (req, res, next) => comunicadosRouter(req, res, next));
-app.post('/comunicados', autenticarBibliotecario, (req, res, next) => comunicadosRouter(req, res, next));
-app.delete('/comunicados/:id', autenticarBibliotecario, (req, res, next) => comunicadosRouter(req, res, next));
+app.use('/comunicados', autenticar, (req: Request, res: Response, next: NextFunction) => {
+  if (['POST', 'DELETE'].includes(req.method)) {
+    return autenticarBibliotecario(req, res, next);
+  }
+  next();
+}, comunicadosRouter);
 
 // ── AVALIAÇÕES ──
-// GET → todos autenticados
-// POST → aluno/professor
 app.use('/avaliacoes', autenticar, avaliacoesRouter);
 
 // ── DESEJOS ──
-// todos autenticados (aluno gerencia os próprios)
 app.use('/desejos', autenticar, desejosRouter);
 
 // ── SUSPENSÕES ──
-// GET verificar → todos autenticados
-// POST/DELETE → só bibliotecário
-app.get('/suspensoes/verificar/:id', autenticar, (req, res, next) => suspensoesRouter(req, res, next));
-app.get('/suspensoes', autenticarBibliotecario, (req, res, next) => suspensoesRouter(req, res, next));
-app.post('/suspensoes', autenticarBibliotecario, (req, res, next) => suspensoesRouter(req, res, next));
-app.delete('/suspensoes/:id', autenticarBibliotecario, (req, res, next) => suspensoesRouter(req, res, next));
+app.use('/suspensoes', autenticar, (req: Request, res: Response, next: NextFunction) => {
+  if (req.path.startsWith('/verificar')) return next();
+  return autenticarBibliotecario(req, res, next);
+}, suspensoesRouter);
 
 // ── IA ──
 app.use('/api/marlene', autenticar, marleneRouter);
