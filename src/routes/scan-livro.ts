@@ -14,7 +14,8 @@ router.post('/analisar', async (req: Request, res: Response) => {
     return res.status(400).json({ erro: 'imagemBase64 é obrigatório' });
   }
 
-  try {    const response = await client.messages.create({
+  try {
+    const response = await client.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 1024,
       messages: [
