@@ -4,8 +4,43 @@ import { usuarios } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import { gerarToken } from '../middleware/auth';
+import nodemailer from 'nodemailer';
+import { pool } from '../db/connection';
 
 const router = Router();
+
+// Configuração do transporter de e-mail
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_PASS,
+  },
+});
+
+async function enviarEmailRecuperacao(email: string, nome: string, codigo: string) {
+  await transporter.sendMail({
+    from: `"Biblioteca BMSQ" <${process.env.GMAIL_USER}>`,
+    to: email,
+    subject: '🔐 Código de recuperação de senha — Biblioteca BMSQ',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; background: #fdfaf4; border-radius: 16px; padding: 32px; border: 1px solid #d9cfbe;">
+        <h2 style="color: #1a1208; margin-bottom: 4px;">Biblioteca Marlene de Souza Queiroz</h2>
+        <p style="color: #8a7d68; font-size: 13px; margin-top: 0;">E. E. Cel. José Venâncio de Souza</p>
+        <hr style="border: none; border-top: 1px solid #d9cfbe; margin: 20px 0;" />
+        <p style="color: #1a1208;">Olá, <strong>${nome}</strong>!</p>
+        <p style="color: #1a1208;">Recebemos uma solicitação para redefinir a senha da sua conta. Use o código abaixo:</p>
+        <div style="background: #1a1208; border-radius: 12px; padding: 24px; text-align: center; margin: 24px 0;">
+          <span style="color: #f0a84a; font-size: 36px; font-weight: 700; letter-spacing: 8px;">${codigo}</span>
+        </div>
+        <p style="color: #8a7d68; font-size: 13px;">Este código expira em <strong>15 minutos</strong>.</p>
+        <p style="color: #8a7d68; font-size: 13px;">Se você não solicitou a recuperação de senha, ignore este e-mail.</p>
+        <hr style="border: none; border-top: 1px solid #d9cfbe; margin: 20px 0;" />
+        <p style="color: #8a7d68; font-size: 11px; text-align: center;">Biblioteca BMSQ · Sistema de Gestão de Acervo</p>
+      </div>
+    `,
+  });
+}
 
 // Listar usuários
 router.get('/', async (req, res) => {
@@ -93,7 +128,7 @@ router.post('/cadastro', async (req, res) => {
   }
 });
 
-// Login — agora retorna JWT token
+// Login
 router.post('/login', async (req, res) => {
   try {
     const { email, senha } = req.body;
@@ -110,14 +145,11 @@ router.post('/login', async (req, res) => {
     if (!senhaCorreta) {
       return res.status(401).json({ erro: 'E-mail ou senha incorretos' });
     }
-
-    // Gera token JWT válido por 30 dias
     const token = gerarToken({
       id: usuario.id,
       email: usuario.email,
       perfil: usuario.perfil,
     });
-
     res.json({
       id: usuario.id,
       nome: usuario.nome,
@@ -125,14 +157,14 @@ router.post('/login', async (req, res) => {
       matricula: usuario.matricula,
       turma: usuario.turma,
       perfil: usuario.perfil,
-      token, // ← novo campo
+      token,
     });
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao fazer login' });
   }
 });
 
-// Recuperação de senha
+// Recuperação de senha — envia código por e-mail e salva no banco
 router.post('/recuperar-senha', async (req, res) => {
   try {
     const { email } = req.body;
@@ -141,22 +173,33 @@ router.post('/recuperar-senha', async (req, res) => {
     }
     const emailNormalizado = email.toLowerCase().trim();
     const resultado = await db.select().from(usuarios).where(eq(usuarios.email, emailNormalizado));
+
+    // Sempre retorna a mesma mensagem para não revelar se o e-mail existe
     if (resultado.length === 0) {
       return res.json({ mensagem: 'Se o e-mail estiver cadastrado, você receberá o código em breve.' });
     }
+
+    const usuario = resultado[0];
     const codigo = Math.floor(100000 + Math.random() * 900000).toString();
     const expira = new Date(Date.now() + 15 * 60 * 1000);
-    res.json({
-      mensagem: 'Código de recuperação gerado.',
-      codigo,
-      expiraEm: expira.toISOString(),
-    });
-  } catch {
+
+    // Salva o código e expiração no banco
+    await pool.query(
+      `UPDATE usuarios SET recuperacao_codigo = $1, recuperacao_expira_em = $2 WHERE id = $3`,
+      [codigo, expira, usuario.id]
+    );
+
+    // Envia o e-mail
+    await enviarEmailRecuperacao(emailNormalizado, usuario.nome, codigo);
+
+    res.json({ mensagem: 'Código enviado para o seu e-mail. Verifique a caixa de entrada.' });
+  } catch (err) {
+    console.error('[recuperar-senha] erro:', err);
     res.status(500).json({ erro: 'Erro ao processar recuperação de senha' });
   }
 });
 
-// Redefinir senha
+// Redefinir senha — valida código salvo no banco
 router.post('/redefinir-senha', async (req, res) => {
   try {
     const { email, codigo, novaSenha } = req.body;
@@ -167,16 +210,33 @@ router.post('/redefinir-senha', async (req, res) => {
       return res.status(400).json({ erro: 'A nova senha deve ter no mínimo 6 caracteres' });
     }
     const emailNormalizado = email.toLowerCase().trim();
-    const resultado = await db.select().from(usuarios).where(eq(usuarios.email, emailNormalizado));
-    if (resultado.length === 0) {
-      return res.status(404).json({ erro: 'Usuário não encontrado' });
+
+    // Busca usuário com código válido e não expirado
+    const resultado = await pool.query(
+      `SELECT * FROM usuarios
+       WHERE email = $1
+         AND recuperacao_codigo = $2
+         AND recuperacao_expira_em > NOW()`,
+      [emailNormalizado, codigo.trim()]
+    );
+
+    if (resultado.rows.length === 0) {
+      return res.status(400).json({ erro: 'Código inválido ou expirado' });
     }
+
     const senhaCriptografada = await bcrypt.hash(novaSenha, 10);
-    await db.update(usuarios)
-      .set({ senha: senhaCriptografada })
-      .where(eq(usuarios.email, emailNormalizado));
+
+    // Atualiza senha e limpa o código
+    await pool.query(
+      `UPDATE usuarios
+       SET senha = $1, recuperacao_codigo = NULL, recuperacao_expira_em = NULL
+       WHERE email = $2`,
+      [senhaCriptografada, emailNormalizado]
+    );
+
     res.json({ mensagem: 'Senha redefinida com sucesso' });
-  } catch {
+  } catch (err) {
+    console.error('[redefinir-senha] erro:', err);
     res.status(500).json({ erro: 'Erro ao redefinir senha' });
   }
 });
