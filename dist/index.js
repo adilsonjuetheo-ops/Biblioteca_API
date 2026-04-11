@@ -67,6 +67,9 @@ async function runMigrations() {
     }
 }
 app.get('/', (_req, res) => { res.json({ status: 'API Biblioteca funcionando!' }); });
+app.patch('/emprestimos/retirada-qr-test', (req, res) => {
+    res.json({ ok: true, path: req.path, method: req.method });
+});
 // ── USUÁRIOS — rotas públicas e protegidas ──
 app.use('/usuarios', (req, res, next) => {
     const rotasPublicas = ['/login', '/cadastro', '/recuperar-senha', '/redefinir-senha'];
@@ -88,6 +91,7 @@ app.use('/livros', auth_1.autenticar, (req, res, next) => {
 }, livros_1.default);
 // ── EMPRÉSTIMOS ──
 app.use('/emprestimos', auth_1.autenticar, (req, res, next) => {
+    console.log('[emprestimos] method:', req.method, 'path:', req.path);
     const rotasBiblio = ['retirada-qr', 'devolver', 'retirar'];
     const ehRotaBiblio = req.method === 'PATCH' && rotasBiblio.some(r => req.path.includes(r));
     if (ehRotaBiblio && req.usuarioAutenticado?.perfil !== 'bibliotecario') {
