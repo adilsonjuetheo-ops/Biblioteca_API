@@ -12,7 +12,7 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 
 async function enviarEmailRecuperacao(email: string, nome: string, codigo: string) {
   await resend.emails.send({
-    from: 'Biblioteca BMSQ <onboarding@resend.dev>',
+    from: 'Biblioteca BMSQ <biblioteca@adilsondev.com.br>',
     to: email,
     subject: 'Codigo de recuperacao de senha - Biblioteca BMSQ',
     html: `
