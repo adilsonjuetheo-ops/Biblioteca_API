@@ -98,8 +98,8 @@ app.use('/livros', autenticar, (req: Request, res: Response, next: NextFunction)
 app.use('/emprestimos', autenticar, (req: Request, res: Response, next: NextFunction) => {
   const rotasBiblio = ['retirada-qr', 'devolver', 'retirar'];
   const ehRotaBiblio = req.method === 'PATCH' && rotasBiblio.some(r => req.path.includes(r));
-  if (ehRotaBiblio) {
-    return autenticarBibliotecario(req, res, next);
+  if (ehRotaBiblio && req.usuarioAutenticado?.perfil !== 'bibliotecario') {
+    return res.status(403).json({ erro: 'Acesso restrito ao bibliotecário' });
   }
   next();
 }, emprestimosRouter);
