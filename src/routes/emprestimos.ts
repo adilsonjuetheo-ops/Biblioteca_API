@@ -43,9 +43,6 @@ router.get('/', async (req, res) => {
       .leftJoin(livros, eq(emprestimos.livroId, livros.id))
       .leftJoin(usuarios, eq(emprestimos.usuarioId, usuarios.id));
 
-    // BUG CORRIGIDO: status 'atrasado' calculado dinamicamente
-    // A API nunca setava esse status — empréstimos vencidos ficavam como 'retirado'
-    // e o card "Em atraso" do painel admin sempre mostrava zero
     const comStatusCalculado = todos.map(emp => ({
       ...emp,
       status: calcularStatus(emp),
@@ -72,70 +69,9 @@ router.post('/', async (req, res) => {
   }
 });
 
-router.patch('/:id/devolver', async (req, res) => {
-  try {
-    const emp = await db.update(emprestimos)
-      .set({ status: 'devolvido', dataDevolucao: new Date() })
-      .where(eq(emprestimos.id, Number(req.params.id)))
-      .returning();
-    await db.update(livros)
-      .set({ disponiveis: sql`${livros.disponiveis} + 1` })
-      .where(eq(livros.id, emp[0].livroId!));
-    res.json(emp[0]);
-  } catch (err) {
-    res.status(500).json({ erro: 'Erro ao registrar devolução' });
-  }
-});
-
-router.patch('/:id/retirar', async (req, res) => {
-  try {
-    // Ao retirar, define automaticamente a data de devolução (8 dias)
-    const dataDevolucao = new Date();
-    dataDevolucao.setDate(dataDevolucao.getDate() + 8);
-
-    const emp = await db.update(emprestimos)
-      .set({ status: 'retirado', dataRetirada: new Date(), dataDevolucao })
-      .where(eq(emprestimos.id, Number(req.params.id)))
-      .returning();
-    res.json({ ...emp[0], status: calcularStatus(emp[0]) });
-  } catch (err) {
-    res.status(500).json({ erro: 'Erro ao registrar retirada' });
-  }
-});
-
-router.patch('/:id/renovar', async (req, res) => {
-  try {
-    const resultado = await db.select().from(emprestimos)
-      .where(eq(emprestimos.id, Number(req.params.id)));
-
-    if (!resultado.length) {
-      return res.status(404).json({ erro: 'Empréstimo não encontrado' });
-    }
-
-    const emp = resultado[0];
-
-    if (emp.renovado) {
-      return res.status(400).json({ erro: 'Este empréstimo já foi renovado uma vez' });
-    }
-
-    // Permite renovar mesmo se estiver atrasado
-    if (emp.status !== 'retirado') {
-      return res.status(400).json({ erro: 'Só é possível renovar empréstimos com livro retirado' });
-    }
-
-    const novaData = new Date();
-    novaData.setDate(novaData.getDate() + 5);
-
-    const atualizado = await db.update(emprestimos)
-      .set({ renovado: true, dataDevolucao: novaData })
-      .where(eq(emprestimos.id, Number(req.params.id)))
-      .returning();
-
-    res.json({ ...atualizado[0], status: calcularStatus(atualizado[0]) });
-  } catch (err) {
-    res.status(500).json({ erro: 'Erro ao renovar empréstimo' });
-  }
-});
+// ── IMPORTANTE: rotas específicas ANTES das rotas com /:id ──
+// Se /retirada-qr vier depois de /:id/devolver, o Express interpreta
+// 'retirada-qr' como um :id e nunca chega nessa rota
 
 router.patch('/retirada-qr', async (req, res) => {
   try {
@@ -195,6 +131,69 @@ router.patch('/retirada-qr', async (req, res) => {
     });
   } catch {
     res.status(500).json({ erro: 'Erro ao processar QR de retirada' });
+  }
+});
+
+router.patch('/:id/devolver', async (req, res) => {
+  try {
+    const emp = await db.update(emprestimos)
+      .set({ status: 'devolvido', dataDevolucao: new Date() })
+      .where(eq(emprestimos.id, Number(req.params.id)))
+      .returning();
+    await db.update(livros)
+      .set({ disponiveis: sql`${livros.disponiveis} + 1` })
+      .where(eq(livros.id, emp[0].livroId!));
+    res.json(emp[0]);
+  } catch (err) {
+    res.status(500).json({ erro: 'Erro ao registrar devolução' });
+  }
+});
+
+router.patch('/:id/retirar', async (req, res) => {
+  try {
+    const dataDevolucao = new Date();
+    dataDevolucao.setDate(dataDevolucao.getDate() + 8);
+
+    const emp = await db.update(emprestimos)
+      .set({ status: 'retirado', dataRetirada: new Date(), dataDevolucao })
+      .where(eq(emprestimos.id, Number(req.params.id)))
+      .returning();
+    res.json({ ...emp[0], status: calcularStatus(emp[0]) });
+  } catch (err) {
+    res.status(500).json({ erro: 'Erro ao registrar retirada' });
+  }
+});
+
+router.patch('/:id/renovar', async (req, res) => {
+  try {
+    const resultado = await db.select().from(emprestimos)
+      .where(eq(emprestimos.id, Number(req.params.id)));
+
+    if (!resultado.length) {
+      return res.status(404).json({ erro: 'Empréstimo não encontrado' });
+    }
+
+    const emp = resultado[0];
+
+    if (emp.renovado) {
+      return res.status(400).json({ erro: 'Este empréstimo já foi renovado uma vez' });
+    }
+
+    if (emp.status !== 'retirado') {
+      return res.status(400).json({ erro: 'Só é possível renovar empréstimos com livro retirado' });
+    }
+
+    const novaData = new Date();
+    novaData.setDate(novaData.getDate() + 5);
+
+    const atualizado = await db.update(emprestimos)
+      .set({ renovado: true, dataDevolucao: novaData })
+      .where(eq(emprestimos.id, Number(req.params.id)))
+      .returning();
+
+    res.json({ ...atualizado[0], status: calcularStatus(atualizado[0]) });
+  } catch (err) {
+    res.status(500).json({ erro: 'Erro ao renovar empréstimo' });
   }
 });
 
