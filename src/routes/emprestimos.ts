@@ -6,10 +6,6 @@ import { pool } from '../db/connection';
 import crypto from 'crypto';
 
 const router = Router();
-router.use((req, res, next) => {
-  console.log('[emprestimosRouter] method:', req.method, 'path:', req.path);
-  next();
-});
 
 // Helpers
 function calcularStatus(emp: {
@@ -73,11 +69,9 @@ router.post('/', async (req, res) => {
   }
 });
 
-// ── IMPORTANTE: rotas específicas ANTES das rotas com /:id ──
-// Se /retirada-qr vier depois de /:id/devolver, o Express interpreta
-// 'retirada-qr' como um :id e nunca chega nessa rota
-
+// ── IMPORTANTE: /retirada-qr ANTES das rotas /:id ──
 router.patch('/retirada-qr', async (req, res) => {
+  console.log('[retirada-qr] handler chamado, body:', req.body);
   try {
     const { codigo } = req.body as { codigo?: string };
     if (!codigo) return res.status(400).json({ erro: 'codigo é obrigatório' });
@@ -106,7 +100,6 @@ router.patch('/retirada-qr', async (req, res) => {
       return res.status(410).json({ erro: 'QR expirado' });
     }
 
-    // Define data de devolução ao confirmar retirada via QR (8 dias)
     const dataDevolucao = new Date();
     dataDevolucao.setDate(dataDevolucao.getDate() + 8);
 
@@ -133,7 +126,8 @@ router.patch('/retirada-qr', async (req, res) => {
         dataDevolucao: dataDevolucao.toISOString(),
       },
     });
-  } catch {
+  } catch (err) {
+    console.log('[retirada-qr] erro:', err);
     res.status(500).json({ erro: 'Erro ao processar QR de retirada' });
   }
 });
@@ -157,7 +151,6 @@ router.patch('/:id/retirar', async (req, res) => {
   try {
     const dataDevolucao = new Date();
     dataDevolucao.setDate(dataDevolucao.getDate() + 8);
-
     const emp = await db.update(emprestimos)
       .set({ status: 'retirado', dataRetirada: new Date(), dataDevolucao })
       .where(eq(emprestimos.id, Number(req.params.id)))
@@ -172,29 +165,22 @@ router.patch('/:id/renovar', async (req, res) => {
   try {
     const resultado = await db.select().from(emprestimos)
       .where(eq(emprestimos.id, Number(req.params.id)));
-
     if (!resultado.length) {
       return res.status(404).json({ erro: 'Empréstimo não encontrado' });
     }
-
     const emp = resultado[0];
-
     if (emp.renovado) {
       return res.status(400).json({ erro: 'Este empréstimo já foi renovado uma vez' });
     }
-
     if (emp.status !== 'retirado') {
       return res.status(400).json({ erro: 'Só é possível renovar empréstimos com livro retirado' });
     }
-
     const novaData = new Date();
     novaData.setDate(novaData.getDate() + 5);
-
     const atualizado = await db.update(emprestimos)
       .set({ renovado: true, dataDevolucao: novaData })
       .where(eq(emprestimos.id, Number(req.params.id)))
       .returning();
-
     res.json({ ...atualizado[0], status: calcularStatus(atualizado[0]) });
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao renovar empréstimo' });
@@ -207,11 +193,9 @@ router.post('/:id/qr-retirada', async (req, res) => {
     const emp = await db.select().from(emprestimos).where(eq(emprestimos.id, id));
     if (!emp.length) return res.status(404).json({ erro: 'Empréstimo não encontrado' });
     if (emp[0].status !== 'reservado') return res.status(400).json({ erro: 'Empréstimo não está no status reservado' });
-
     const codigo = crypto.randomBytes(4).toString('hex').toUpperCase();
     const payload = `BIBLIO:${id}:${codigo}`;
     const expira = new Date(Date.now() + 15 * 60 * 1000);
-
     await pool.query(
       `UPDATE emprestimos
        SET retirada_qr_codigo = $1,
@@ -222,7 +206,6 @@ router.post('/:id/qr-retirada', async (req, res) => {
        WHERE id = $4`,
       [codigo, payload, expira, id]
     );
-
     res.json({ codigo, payload, expiraEm: expira.toISOString() });
   } catch {
     res.status(500).json({ erro: 'Erro ao gerar QR de retirada' });
