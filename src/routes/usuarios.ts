@@ -3,7 +3,7 @@ import { db } from '../db/connection';
 import { usuarios } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
-import { gerarToken } from '../middleware/auth';
+import { gerarToken, autenticar } from '../middleware/auth';
 import { Resend } from 'resend';
 import { pool } from '../db/connection';
 
@@ -192,6 +192,196 @@ router.get('/email/:email', async (req, res) => {
     res.json(usuario[0]);
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao buscar usuario' });
+  }
+});
+
+router.get('/deletar-conta', (_req, res) => {
+  const html = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Excluir Conta — Biblioteca BMSQ</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: Arial, sans-serif;
+      background: #fdfaf4;
+      color: #1a1208;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .card {
+      background: #fff;
+      border: 1px solid #d9cfbe;
+      border-radius: 16px;
+      padding: 40px 36px;
+      width: 100%;
+      max-width: 440px;
+      box-shadow: 0 4px 24px rgba(26,18,8,0.07);
+    }
+    .header h1 {
+      font-size: 17px;
+      color: #1a1208;
+      line-height: 1.3;
+    }
+    .header p {
+      font-size: 12px;
+      color: #8a7d68;
+      margin-top: 2px;
+    }
+    hr { border: none; border-top: 1px solid #d9cfbe; margin: 20px 0; }
+    .aviso {
+      background: #fff4e5;
+      border: 1px solid #f0a84a;
+      border-radius: 10px;
+      padding: 14px 16px;
+      font-size: 13px;
+      color: #7a4f00;
+      margin-bottom: 24px;
+      line-height: 1.5;
+    }
+    .aviso strong { color: #c07000; }
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: bold;
+      color: #1a1208;
+      margin-bottom: 6px;
+    }
+    input {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1px solid #d9cfbe;
+      border-radius: 10px;
+      font-family: Arial, sans-serif;
+      font-size: 14px;
+      color: #1a1208;
+      background: #fdfaf4;
+      outline: none;
+      transition: border-color 0.2s;
+      margin-bottom: 16px;
+    }
+    input:focus { border-color: #f0a84a; }
+    button {
+      width: 100%;
+      padding: 12px;
+      background: #1a1208;
+      color: #f0a84a;
+      border: none;
+      border-radius: 10px;
+      font-family: Arial, sans-serif;
+      font-size: 15px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: background 0.2s;
+      margin-top: 4px;
+    }
+    button:hover { background: #2e2010; }
+    button:disabled { background: #8a7d68; color: #d9cfbe; cursor: not-allowed; }
+    #msg {
+      margin-top: 16px;
+      font-size: 13px;
+      text-align: center;
+      min-height: 20px;
+    }
+    .msg-erro { color: #c0392b; }
+    .msg-ok { color: #1a7a4a; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <h1>Biblioteca Marlene de Souza Queiroz<br>/ E. E. Cel. José Venâncio de Souza</h1>
+      <p>Sistema de Gestão de Acervo</p>
+    </div>
+    <hr />
+    <div class="aviso">
+      <strong>⚠ Atenção: esta ação é irreversível.</strong><br />
+      Ao excluir sua conta, todos os seus dados e o histórico de empréstimos serão permanentemente removidos e não poderão ser recuperados.
+    </div>
+    <form id="form">
+      <label for="email">E-mail</label>
+      <input type="email" id="email" placeholder="seu@email.com" required />
+      <label for="senha">Senha</label>
+      <input type="password" id="senha" placeholder="Sua senha" required />
+      <button type="submit" id="btn">Excluir minha conta</button>
+    </form>
+    <div id="msg"></div>
+  </div>
+  <script>
+    const form = document.getElementById('form');
+    const btn = document.getElementById('btn');
+    const msg = document.getElementById('msg');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      btn.disabled = true;
+      btn.textContent = 'Aguarde...';
+      msg.textContent = '';
+      msg.className = '';
+
+      const email = document.getElementById('email').value.trim();
+      const senha = document.getElementById('senha').value;
+
+      try {
+        const loginRes = await fetch('/usuarios/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, senha }),
+        });
+        const loginData = await loginRes.json();
+
+        if (!loginRes.ok) {
+          msg.textContent = loginData.erro || 'E-mail ou senha incorretos.';
+          msg.className = 'msg-erro';
+          btn.disabled = false;
+          btn.textContent = 'Excluir minha conta';
+          return;
+        }
+
+        const deleteRes = await fetch('/usuarios/deletar-conta', {
+          method: 'DELETE',
+          headers: { 'Authorization': 'Bearer ' + loginData.token },
+        });
+        const deleteData = await deleteRes.json();
+
+        if (!deleteRes.ok) {
+          msg.textContent = deleteData.erro || 'Erro ao excluir a conta.';
+          msg.className = 'msg-erro';
+          btn.disabled = false;
+          btn.textContent = 'Excluir minha conta';
+          return;
+        }
+
+        msg.textContent = deleteData.mensagem || 'Conta excluída com sucesso.';
+        msg.className = 'msg-ok';
+        form.style.display = 'none';
+        btn.style.display = 'none';
+      } catch (err) {
+        msg.textContent = 'Erro de conexão. Tente novamente.';
+        msg.className = 'msg-erro';
+        btn.disabled = false;
+        btn.textContent = 'Excluir minha conta';
+      }
+    });
+  </script>
+</body>
+</html>`;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
+});
+
+router.delete('/deletar-conta', autenticar, async (req, res) => {
+  try {
+    const payload = req.usuarioAutenticado!;
+    await db.delete(usuarios).where(eq(usuarios.id, payload.id));
+    res.json({ mensagem: 'Conta excluida com sucesso' });
+  } catch (err) {
+    res.status(500).json({ erro: 'Erro ao excluir conta' });
   }
 });
 
