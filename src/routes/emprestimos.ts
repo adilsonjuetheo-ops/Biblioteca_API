@@ -6,6 +6,10 @@ import { pool } from '../db/connection';
 import crypto from 'crypto';
 
 const router = Router();
+router.use((req, res, next) => {
+  console.log('[emprestimosRouter] method:', req.method, 'path:', req.path);
+  next();
+});
 
 // Helpers
 function calcularStatus(emp: {
