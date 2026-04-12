@@ -72,7 +72,7 @@ app.patch('/emprestimos/retirada-qr-test', (req, res) => {
 });
 // ── USUÁRIOS — rotas públicas e protegidas ──
 app.use('/usuarios', (req, res, next) => {
-    const rotasPublicas = ['/login', '/cadastro', '/recuperar-senha', '/redefinir-senha'];
+    const rotasPublicas = ['/login', '/cadastro', '/recuperar-senha', '/redefinir-senha', '/deletar-conta'];
     const ehPublica = rotasPublicas.some(r => req.path.startsWith(r))
         || (req.method === 'POST' && req.path === '/');
     if (ehPublica)

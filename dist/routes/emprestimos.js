@@ -55,7 +55,13 @@ router.get('/', async (req, res) => {
 });
 router.post('/', async (req, res) => {
     try {
-        const { usuarioId, livroId } = req.body;
+        const { livroId } = req.body;
+        // usuarioId sempre vem do token — nunca do body
+        const usuarioId = req.usuarioAutenticado?.id;
+        if (!usuarioId)
+            return res.status(401).json({ erro: 'Usuário não autenticado' });
+        if (!livroId)
+            return res.status(400).json({ erro: 'livroId é obrigatório' });
         const novo = await connection_1.db.insert(schema_1.emprestimos)
             .values({ usuarioId, livroId, status: 'reservado' })
             .returning();
@@ -68,10 +74,38 @@ router.post('/', async (req, res) => {
         res.status(500).json({ erro: 'Erro ao criar reserva' });
     }
 });
-// ── IMPORTANTE: rotas específicas ANTES das rotas com /:id ──
-// Se /retirada-qr vier depois de /:id/devolver, o Express interpreta
-// 'retirada-qr' como um :id e nunca chega nessa rota
+// Reparo: remove empréstimos sem usuário (usuarioId NULL) e restaura exemplares
+router.post('/reparar-orfaos', async (req, res) => {
+    if (req.usuarioAutenticado?.perfil !== 'bibliotecario') {
+        return res.status(403).json({ erro: 'Acesso restrito ao bibliotecário' });
+    }
+    try {
+        // Busca empréstimos órfãos
+        const orfaos = await connection_2.pool.query(`SELECT id, livro_id, status FROM emprestimos WHERE usuario_id IS NULL`);
+        if (orfaos.rows.length === 0) {
+            return res.json({ reparados: 0, mensagem: 'Nenhum empréstimo órfão encontrado.' });
+        }
+        // Restaura exemplares dos ativos/retirados
+        for (const emp of orfaos.rows) {
+            if (emp.status === 'reservado' || emp.status === 'retirado') {
+                await connection_2.pool.query(`UPDATE livros SET disponiveis = LEAST(disponiveis + 1, total_exemplares) WHERE id = $1`, [emp.livro_id]);
+            }
+        }
+        // Remove os órfãos
+        await connection_2.pool.query(`DELETE FROM emprestimos WHERE usuario_id IS NULL`);
+        res.json({
+            reparados: orfaos.rows.length,
+            mensagem: `${orfaos.rows.length} empréstimo(s) sem dono removido(s) e exemplares devolvidos ao acervo.`,
+        });
+    }
+    catch (err) {
+        console.error('[reparar-orfaos]', err);
+        res.status(500).json({ erro: 'Erro ao reparar empréstimos' });
+    }
+});
+// ── IMPORTANTE: /retirada-qr ANTES das rotas /:id ──
 router.patch('/retirada-qr', async (req, res) => {
+    console.log('[retirada-qr] handler chamado, body:', req.body);
     try {
         const { codigo } = req.body;
         if (!codigo)
@@ -90,7 +124,6 @@ router.patch('/retirada-qr', async (req, res) => {
             await connection_2.pool.query(`UPDATE emprestimos SET retirada_qr_codigo = NULL WHERE id = $1`, [emp.id]);
             return res.status(410).json({ erro: 'QR expirado' });
         }
-        // Define data de devolução ao confirmar retirada via QR (8 dias)
         const dataDevolucao = new Date();
         dataDevolucao.setDate(dataDevolucao.getDate() + 8);
         await connection_2.pool.query(`UPDATE emprestimos
@@ -113,7 +146,8 @@ router.patch('/retirada-qr', async (req, res) => {
             },
         });
     }
-    catch {
+    catch (err) {
+        console.log('[retirada-qr] erro:', err);
         res.status(500).json({ erro: 'Erro ao processar QR de retirada' });
     }
 });

@@ -56,7 +56,11 @@ router.get('/', async (req, res) => {
 
 router.post('/', async (req, res) => {
   try {
-    const { usuarioId, livroId } = req.body;
+    const { livroId } = req.body;
+    // usuarioId sempre vem do token — nunca do body
+    const usuarioId = req.usuarioAutenticado?.id;
+    if (!usuarioId) return res.status(401).json({ erro: 'Usuário não autenticado' });
+    if (!livroId) return res.status(400).json({ erro: 'livroId é obrigatório' });
     const novo = await db.insert(emprestimos)
       .values({ usuarioId, livroId, status: 'reservado' })
       .returning();
@@ -66,6 +70,40 @@ router.post('/', async (req, res) => {
     res.status(201).json(novo[0]);
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao criar reserva' });
+  }
+});
+
+// Reparo: remove empréstimos sem usuário (usuarioId NULL) e restaura exemplares
+router.post('/reparar-orfaos', async (req, res) => {
+  if (req.usuarioAutenticado?.perfil !== 'bibliotecario') {
+    return res.status(403).json({ erro: 'Acesso restrito ao bibliotecário' });
+  }
+  try {
+    // Busca empréstimos órfãos
+    const orfaos = await pool.query(
+      `SELECT id, livro_id, status FROM emprestimos WHERE usuario_id IS NULL`
+    );
+    if (orfaos.rows.length === 0) {
+      return res.json({ reparados: 0, mensagem: 'Nenhum empréstimo órfão encontrado.' });
+    }
+    // Restaura exemplares dos ativos/retirados
+    for (const emp of orfaos.rows) {
+      if (emp.status === 'reservado' || emp.status === 'retirado') {
+        await pool.query(
+          `UPDATE livros SET disponiveis = LEAST(disponiveis + 1, total_exemplares) WHERE id = $1`,
+          [emp.livro_id]
+        );
+      }
+    }
+    // Remove os órfãos
+    await pool.query(`DELETE FROM emprestimos WHERE usuario_id IS NULL`);
+    res.json({
+      reparados: orfaos.rows.length,
+      mensagem: `${orfaos.rows.length} empréstimo(s) sem dono removido(s) e exemplares devolvidos ao acervo.`,
+    });
+  } catch (err) {
+    console.error('[reparar-orfaos]', err);
+    res.status(500).json({ erro: 'Erro ao reparar empréstimos' });
   }
 });
 
