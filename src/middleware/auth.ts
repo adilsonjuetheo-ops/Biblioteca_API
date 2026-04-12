@@ -41,9 +41,11 @@ export function autenticar(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+const PERFIS_ADMIN = ['bibliotecario', 'coordenacao'];
+
 export function autenticarBibliotecario(req: Request, res: Response, next: NextFunction) {
   autenticar(req, res, () => {
-    if (req.usuarioAutenticado?.perfil !== 'bibliotecario') {
+    if (!PERFIS_ADMIN.includes(req.usuarioAutenticado?.perfil ?? '')) {
       return res.status(403).json({ erro: 'Acesso restrito ao bibliotecário' });
     }
     next();

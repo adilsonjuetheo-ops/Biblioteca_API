@@ -102,7 +102,7 @@ app.use('/emprestimos', autenticar, (req: Request, res: Response, next: NextFunc
   console.log('[emprestimos] method:', req.method, 'path:', req.path);
   const rotasBiblio = ['retirada-qr', 'devolver', 'retirar'];
   const ehRotaBiblio = req.method === 'PATCH' && rotasBiblio.some(r => req.path.includes(r));
-  if (ehRotaBiblio && req.usuarioAutenticado?.perfil !== 'bibliotecario') {
+  if (ehRotaBiblio && !['bibliotecario', 'coordenacao'].includes(req.usuarioAutenticado?.perfil ?? '')) {
     return res.status(403).json({ erro: 'Acesso restrito ao bibliotecário' });
   }
   next();
