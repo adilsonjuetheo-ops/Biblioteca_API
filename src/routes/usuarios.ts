@@ -3,7 +3,7 @@ import { db } from '../db/connection';
 import { usuarios } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
-import { gerarToken, autenticar } from '../middleware/auth';
+import { gerarToken, autenticar, autenticarBibliotecario } from '../middleware/auth';
 import { Resend } from 'resend';
 import { pool } from '../db/connection';
 
@@ -382,6 +382,46 @@ router.delete('/deletar-conta', autenticar, async (req, res) => {
     res.json({ mensagem: 'Conta excluida com sucesso' });
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao excluir conta' });
+  }
+});
+
+router.put('/:id', autenticarBibliotecario, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { nome, email, matricula, turma, perfil, senha } = req.body;
+
+    const dados: Record<string, unknown> = {};
+    if (nome !== undefined) dados.nome = nome;
+    if (email !== undefined) dados.email = email.toLowerCase().trim();
+    if (matricula !== undefined) dados.matricula = matricula;
+    if (turma !== undefined) dados.turma = turma;
+    if (perfil !== undefined) dados.perfil = perfil;
+    if (senha && senha.length >= 6) dados.senha = await bcrypt.hash(senha, 10);
+
+    if (Object.keys(dados).length === 0) {
+      return res.status(400).json({ erro: 'Nenhum campo válido para atualizar' });
+    }
+
+    const atualizado = await db.update(usuarios)
+      .set(dados)
+      .where(eq(usuarios.id, id))
+      .returning({
+        id: usuarios.id,
+        nome: usuarios.nome,
+        email: usuarios.email,
+        matricula: usuarios.matricula,
+        turma: usuarios.turma,
+        perfil: usuarios.perfil,
+        criadoEm: usuarios.criadoEm,
+      });
+
+    if (!atualizado.length) {
+      return res.status(404).json({ erro: 'Usuário não encontrado' });
+    }
+
+    res.json(atualizado[0]);
+  } catch (err) {
+    res.status(500).json({ erro: 'Erro ao atualizar usuário' });
   }
 });
 
