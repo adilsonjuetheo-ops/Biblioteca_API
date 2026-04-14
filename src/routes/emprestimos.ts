@@ -4,6 +4,7 @@ import { emprestimos, livros, usuarios } from '../db/schema';
 import { eq, sql } from 'drizzle-orm';
 import { pool } from '../db/connection';
 import crypto from 'crypto';
+import { autenticarBibliotecario } from '../middleware/auth';
 
 const router = Router();
 
@@ -247,6 +248,32 @@ router.post('/:id/qr-retirada', async (req, res) => {
     res.json({ codigo, payload, expiraEm: expira.toISOString() });
   } catch {
     res.status(500).json({ erro: 'Erro ao gerar QR de retirada' });
+  }
+});
+
+router.delete('/:id', autenticarBibliotecario, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    const resultado = await db.select().from(emprestimos).where(eq(emprestimos.id, id));
+    if (!resultado.length) {
+      return res.status(404).json({ erro: 'Empréstimo não encontrado' });
+    }
+
+    const emp = resultado[0];
+    const status = calcularStatus(emp);
+
+    if (['reservado', 'retirado', 'atrasado'].includes(status)) {
+      await db.update(livros)
+        .set({ disponiveis: sql`${livros.disponiveis} + 1` })
+        .where(eq(livros.id, emp.livroId!));
+    }
+
+    await db.delete(emprestimos).where(eq(emprestimos.id, id));
+
+    res.json({ mensagem: 'Empréstimo excluído com sucesso' });
+  } catch (err) {
+    res.status(500).json({ erro: 'Erro ao excluir empréstimo' });
   }
 });
 
