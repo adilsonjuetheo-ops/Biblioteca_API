@@ -45,6 +45,9 @@ async function runMigrations() {
       'ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS bloqueado_ate TIMESTAMP'
     );
     await pool.query(
+      'ALTER TABLE livros ADD COLUMN IF NOT EXISTS prateleira TEXT'
+    );
+    await pool.query(
       'CREATE TABLE IF NOT EXISTS suspensoes (' +
       'id SERIAL PRIMARY KEY, ' +
       'usuario_id INTEGER REFERENCES usuarios(id) ON DELETE CASCADE, ' +

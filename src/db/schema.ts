@@ -21,6 +21,7 @@ export const livros = pgTable('livros', {
   totalExemplares: integer('total_exemplares').default(1),
   disponiveis: integer('disponiveis').default(1),
   capa: text('capa'),
+  prateleira: text('prateleira'),
   ativo: boolean('ativo').default(true),
   criadoEm: timestamp('criado_em').defaultNow(),
 });

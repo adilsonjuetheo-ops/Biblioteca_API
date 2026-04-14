@@ -29,7 +29,7 @@ router.get('/:id', async (req, res) => {
 // Antes: db.insert(livros).values(req.body) — qualquer campo podia ser forjado
 router.post('/', async (req, res) => {
   try {
-    const { titulo, autor, genero, sinopse, capa, totalExemplares } = req.body;
+    const { titulo, autor, genero, sinopse, capa, prateleira, totalExemplares } = req.body;
 
     if (!titulo || !titulo.trim()) {
       return res.status(400).json({ erro: 'Título é obrigatório' });
@@ -43,6 +43,7 @@ router.post('/', async (req, res) => {
       genero: genero?.trim() || null,
       sinopse: sinopse?.trim() || null,
       capa: capa?.trim() || null,
+      prateleira: prateleira?.trim() || null,
       totalExemplares: total,
       disponiveis: total,
     }).returning();
@@ -55,7 +56,7 @@ router.post('/', async (req, res) => {
 
 router.put('/:id', async (req, res) => {
   try {
-    const { titulo, autor, genero, sinopse, capa, totalExemplares, disponiveis } = req.body;
+    const { titulo, autor, genero, sinopse, capa, prateleira, totalExemplares, disponiveis } = req.body;
 
     const atualizado = await db.update(livros)
       .set({
@@ -64,6 +65,7 @@ router.put('/:id', async (req, res) => {
         genero: genero?.trim() || null,
         sinopse: sinopse?.trim() || null,
         capa: capa?.trim() || null,
+        prateleira: prateleira !== undefined ? (prateleira?.trim() || null) : undefined,
         totalExemplares: totalExemplares !== undefined ? Number(totalExemplares) : undefined,
         disponiveis: disponiveis !== undefined ? Number(disponiveis) : undefined,
       })
