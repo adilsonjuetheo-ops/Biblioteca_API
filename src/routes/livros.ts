@@ -2,13 +2,37 @@ import { Router } from 'express';
 import { db } from '../db/connection';
 import { livros } from '../db/schema';
 import { eq } from 'drizzle-orm';
+import { livrosCache } from '../cache';
 
 const router = Router();
 
+const CAMPOS_LISTA = {
+  id: livros.id,
+  titulo: livros.titulo,
+  autor: livros.autor,
+  genero: livros.genero,
+  sinopse: livros.sinopse,
+  capa: livros.capa,
+  totalExemplares: livros.totalExemplares,
+  disponiveis: livros.disponiveis,
+};
+
 router.get('/', async (req, res) => {
   try {
-    const todos = await db.select().from(livros);
-    res.json(todos);
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(200, Math.max(0, Number(req.query.limit) || 0));
+    const cacheKey = `livros:p${page}:l${limit}`;
+
+    const cached = livrosCache.get(cacheKey);
+    if (cached) return res.json(cached);
+
+    const query = db.select(CAMPOS_LISTA).from(livros);
+    const resultado = limit > 0
+      ? await query.limit(limit).offset((page - 1) * limit)
+      : await query;
+
+    livrosCache.set(cacheKey, resultado);
+    res.json(resultado);
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao buscar livros' });
   }
@@ -48,6 +72,7 @@ router.post('/', async (req, res) => {
       disponiveis: total,
     }).returning();
 
+    livrosCache.flushAll();
     res.status(201).json(novo[0]);
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao adicionar livro' });
@@ -76,6 +101,7 @@ router.put('/:id', async (req, res) => {
       return res.status(404).json({ erro: 'Livro não encontrado' });
     }
 
+    livrosCache.flushAll();
     res.json(atualizado[0]);
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao editar livro' });
@@ -103,6 +129,7 @@ router.patch('/:id', async (req, res) => {
       .where(eq(livros.id, Number(req.params.id)))
       .returning();
 
+    livrosCache.flushAll();
     res.json(atualizado[0]);
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao atualizar livro' });
@@ -127,6 +154,7 @@ router.delete('/:id', async (req, res) => {
     }
 
     await db.delete(livros).where(eq(livros.id, Number(req.params.id)));
+    livrosCache.flushAll();
     res.json({ mensagem: 'Livro removido com sucesso' });
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao remover livro' });
