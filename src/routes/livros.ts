@@ -10,6 +10,7 @@ const CAMPOS_LISTA = {
   id: livros.id,
   titulo: livros.titulo,
   autor: livros.autor,
+  isbn: livros.isbn,
   genero: livros.genero,
   sinopse: livros.sinopse,
   capa: livros.capa,
@@ -54,7 +55,7 @@ router.get('/:id', async (req, res) => {
 // Antes: db.insert(livros).values(req.body) — qualquer campo podia ser forjado
 router.post('/', async (req, res) => {
   try {
-    const { titulo, autor, genero, sinopse, capa, prateleira, totalExemplares } = req.body;
+    const { titulo, autor, isbn, genero, sinopse, capa, prateleira, totalExemplares } = req.body;
 
     if (!titulo || !titulo.trim()) {
       return res.status(400).json({ erro: 'Título é obrigatório' });
@@ -65,6 +66,7 @@ router.post('/', async (req, res) => {
     const novo = await db.insert(livros).values({
       titulo: titulo.trim(),
       autor: autor?.trim() || null,
+      isbn: isbn?.trim() || null,
       genero: genero?.trim() || null,
       sinopse: sinopse?.trim() || null,
       capa: capa?.trim() || null,
@@ -82,12 +84,13 @@ router.post('/', async (req, res) => {
 
 router.put('/:id', async (req, res) => {
   try {
-    const { titulo, autor, genero, sinopse, capa, prateleira, totalExemplares, disponiveis } = req.body;
+    const { titulo, autor, isbn, genero, sinopse, capa, prateleira, totalExemplares, disponiveis } = req.body;
 
     const atualizado = await db.update(livros)
       .set({
         titulo: titulo?.trim(),
         autor: autor?.trim() || null,
+        isbn: isbn !== undefined ? (isbn?.trim() || null) : undefined,
         genero: genero?.trim() || null,
         sinopse: sinopse?.trim() || null,
         capa: capa?.trim() || null,
