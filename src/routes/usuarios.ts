@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { db } from '../db/connection';
-import { usuarios } from '../db/schema';
-import { eq } from 'drizzle-orm';
+import { emprestimos, livros, usuarios } from '../db/schema';
+import { and, asc, count, desc, eq, ilike, or, sql } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import { gerarToken, autenticar, autenticarBibliotecario } from '../middleware/auth';
 import { Resend } from 'resend';
@@ -36,7 +36,23 @@ async function enviarEmailRecuperacao(email: string, nome: string, codigo: strin
 
 router.get('/', async (req, res) => {
   try {
-    const todos = await db.select({
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(200, Math.max(0, Number(req.query.limit) || 0));
+    const busca = String(req.query.search || '').trim();
+    const perfil = String(req.query.perfil || '').trim();
+
+    const filtros = [];
+    if (busca) {
+      filtros.push(or(
+        ilike(usuarios.nome, `%${busca}%`),
+        ilike(usuarios.email, `%${busca}%`),
+        ilike(usuarios.matricula, `%${busca}%`)
+      ));
+    }
+    if (perfil && perfil !== 'todos') filtros.push(eq(usuarios.perfil, perfil));
+    const whereClause = filtros.length ? and(...filtros) : undefined;
+
+    let query = db.select({
       id: usuarios.id,
       nome: usuarios.nome,
       email: usuarios.email,
@@ -44,7 +60,24 @@ router.get('/', async (req, res) => {
       turma: usuarios.turma,
       perfil: usuarios.perfil,
       criadoEm: usuarios.criadoEm,
-    }).from(usuarios);
+    }).from(usuarios).$dynamic();
+
+    if (whereClause) query = query.where(whereClause);
+    query = query.orderBy(asc(usuarios.nome));
+
+    const todos = limit > 0
+      ? await query.limit(limit).offset((page - 1) * limit)
+      : await query;
+
+    if (limit > 0) {
+      let totalQuery = db.select({ total: count() }).from(usuarios).$dynamic();
+      if (whereClause) totalQuery = totalQuery.where(whereClause);
+      const totalRows = await totalQuery;
+      res.setHeader('X-Total-Count', String(totalRows[0]?.total || 0));
+      res.setHeader('X-Page', String(page));
+      res.setHeader('X-Limit', String(limit));
+    }
+
     res.json(todos);
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao buscar usuarios' });
@@ -192,6 +225,47 @@ router.get('/email/:email', async (req, res) => {
     res.json(usuario[0]);
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao buscar usuario' });
+  }
+});
+
+router.get('/:id/emprestimos', autenticarBibliotecario, async (req, res) => {
+  try {
+    const usuarioId = Number(req.params.id);
+    const limit = Math.min(200, Math.max(0, Number(req.query.limit) || 0));
+
+    const statusCalculado = sql<string>`
+      CASE
+        WHEN ${emprestimos.status} = 'devolvido' THEN 'devolvido'
+        WHEN ${emprestimos.status} = 'retirado' AND ${emprestimos.dataDevolucao} < NOW() THEN 'atrasado'
+        ELSE ${emprestimos.status}
+      END
+    `;
+
+    let query = db.select({
+      id: emprestimos.id,
+      usuarioId: emprestimos.usuarioId,
+      livroId: emprestimos.livroId,
+      status: statusCalculado,
+      dataReserva: emprestimos.dataReserva,
+      dataRetirada: emprestimos.dataRetirada,
+      dataDevolucao: emprestimos.dataDevolucao,
+      renovado: emprestimos.renovado,
+      livroTitulo: livros.titulo,
+      livroAutor: livros.autor,
+      livroGenero: livros.genero,
+      livroCapa: livros.capa,
+    })
+      .from(emprestimos)
+      .leftJoin(livros, eq(emprestimos.livroId, livros.id))
+      .where(eq(emprestimos.usuarioId, usuarioId))
+      .$dynamic();
+
+    query = query.orderBy(desc(emprestimos.dataReserva), desc(emprestimos.id));
+
+    const historico = limit > 0 ? await query.limit(limit) : await query;
+    res.json(historico);
+  } catch (err) {
+    res.status(500).json({ erro: 'Erro ao carregar histórico do usuário' });
   }
 });
 

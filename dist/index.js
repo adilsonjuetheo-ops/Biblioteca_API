@@ -16,6 +16,7 @@ const connection_1 = require("./db/connection");
 const suspensoes_1 = __importDefault(require("./routes/suspensoes"));
 const marlene_1 = __importDefault(require("./routes/marlene"));
 const scan_livro_1 = __importDefault(require("./routes/scan-livro"));
+const dashboard_1 = __importDefault(require("./routes/dashboard"));
 const auth_1 = require("./middleware/auth");
 dotenv_1.default.config();
 const app = (0, express_1.default)();
@@ -40,6 +41,9 @@ async function runMigrations() {
             'UNIQUE (usuario_id, livro_id)' +
             ')');
         await connection_1.pool.query('ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS bloqueado_ate TIMESTAMP');
+        await connection_1.pool.query('ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS recuperacao_codigo TEXT');
+        await connection_1.pool.query('ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS recuperacao_expira_em TIMESTAMP');
+        await connection_1.pool.query('ALTER TABLE livros ADD COLUMN IF NOT EXISTS prateleira TEXT');
         await connection_1.pool.query('CREATE TABLE IF NOT EXISTS suspensoes (' +
             'id SERIAL PRIMARY KEY, ' +
             'usuario_id INTEGER REFERENCES usuarios(id) ON DELETE CASCADE, ' +
@@ -59,6 +63,19 @@ async function runMigrations() {
         })) {
             await connection_1.pool.query('ALTER TABLE emprestimos ADD COLUMN IF NOT EXISTS ' + col + ' ' + type);
         }
+        await connection_1.pool.query('CREATE INDEX IF NOT EXISTS idx_livros_titulo ON livros (titulo)');
+        await connection_1.pool.query('CREATE INDEX IF NOT EXISTS idx_livros_autor ON livros (autor)');
+        await connection_1.pool.query('CREATE INDEX IF NOT EXISTS idx_livros_genero ON livros (genero)');
+        await connection_1.pool.query('CREATE INDEX IF NOT EXISTS idx_livros_disponiveis ON livros (disponiveis)');
+        await connection_1.pool.query('CREATE INDEX IF NOT EXISTS idx_usuarios_perfil ON usuarios (perfil)');
+        await connection_1.pool.query('CREATE INDEX IF NOT EXISTS idx_usuarios_turma ON usuarios (turma)');
+        await connection_1.pool.query('CREATE INDEX IF NOT EXISTS idx_usuarios_matricula ON usuarios (matricula)');
+        await connection_1.pool.query('CREATE INDEX IF NOT EXISTS idx_emprestimos_usuario_id ON emprestimos (usuario_id)');
+        await connection_1.pool.query('CREATE INDEX IF NOT EXISTS idx_emprestimos_livro_id ON emprestimos (livro_id)');
+        await connection_1.pool.query('CREATE INDEX IF NOT EXISTS idx_emprestimos_status ON emprestimos (status)');
+        await connection_1.pool.query('CREATE INDEX IF NOT EXISTS idx_emprestimos_data_devolucao ON emprestimos (data_devolucao)');
+        await connection_1.pool.query('CREATE INDEX IF NOT EXISTS idx_emprestimos_data_reserva ON emprestimos (data_reserva)');
+        await connection_1.pool.query('CREATE INDEX IF NOT EXISTS idx_emprestimos_retirada_qr_codigo ON emprestimos (retirada_qr_codigo)');
         console.log('[migrations] OK');
     }
     catch (e) {
@@ -89,12 +106,14 @@ app.use('/livros', auth_1.autenticar, (req, res, next) => {
     }
     next();
 }, livros_1.default);
+// ── DASHBOARD ADMIN ──
+app.use('/dashboard', auth_1.autenticarBibliotecario, dashboard_1.default);
 // ── EMPRÉSTIMOS ──
 app.use('/emprestimos', auth_1.autenticar, (req, res, next) => {
     console.log('[emprestimos] method:', req.method, 'path:', req.path);
     const rotasBiblio = ['retirada-qr', 'devolver', 'retirar'];
     const ehRotaBiblio = req.method === 'PATCH' && rotasBiblio.some(r => req.path.includes(r));
-    if (ehRotaBiblio && req.usuarioAutenticado?.perfil !== 'bibliotecario') {
+    if (ehRotaBiblio && !['bibliotecario', 'coordenacao'].includes(req.usuarioAutenticado?.perfil ?? '')) {
         return res.status(403).json({ erro: 'Acesso restrito ao bibliotecário' });
     }
     next();

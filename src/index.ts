@@ -11,6 +11,7 @@ import { pool } from './db/connection';
 import suspensoesRouter from './routes/suspensoes';
 import marleneRouter from './routes/marlene';
 import scanLivroRouter from './routes/scan-livro';
+import dashboardRouter from './routes/dashboard';
 import { autenticar, autenticarBibliotecario } from './middleware/auth';
 
 dotenv.config();
@@ -45,6 +46,12 @@ async function runMigrations() {
       'ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS bloqueado_ate TIMESTAMP'
     );
     await pool.query(
+      'ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS recuperacao_codigo TEXT'
+    );
+    await pool.query(
+      'ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS recuperacao_expira_em TIMESTAMP'
+    );
+    await pool.query(
       'ALTER TABLE livros ADD COLUMN IF NOT EXISTS prateleira TEXT'
     );
     await pool.query(
@@ -68,6 +75,19 @@ async function runMigrations() {
     })) {
       await pool.query('ALTER TABLE emprestimos ADD COLUMN IF NOT EXISTS ' + col + ' ' + type);
     }
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_livros_titulo ON livros (titulo)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_livros_autor ON livros (autor)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_livros_genero ON livros (genero)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_livros_disponiveis ON livros (disponiveis)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_usuarios_perfil ON usuarios (perfil)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_usuarios_turma ON usuarios (turma)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_usuarios_matricula ON usuarios (matricula)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_emprestimos_usuario_id ON emprestimos (usuario_id)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_emprestimos_livro_id ON emprestimos (livro_id)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_emprestimos_status ON emprestimos (status)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_emprestimos_data_devolucao ON emprestimos (data_devolucao)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_emprestimos_data_reserva ON emprestimos (data_reserva)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_emprestimos_retirada_qr_codigo ON emprestimos (retirada_qr_codigo)');
     console.log('[migrations] OK');
   } catch (e) {
     console.error('[migrations] Erro:', e);
@@ -99,6 +119,9 @@ app.use('/livros', autenticar, (req: Request, res: Response, next: NextFunction)
   }
   next();
 }, livrosRouter);
+
+// ── DASHBOARD ADMIN ──
+app.use('/dashboard', autenticarBibliotecario, dashboardRouter);
 
 // ── EMPRÉSTIMOS ──
 app.use('/emprestimos', autenticar, (req: Request, res: Response, next: NextFunction) => {

@@ -38,7 +38,18 @@ async function enviarEmailRecuperacao(email, nome, codigo) {
 }
 router.get('/', async (req, res) => {
     try {
-        const todos = await connection_1.db.select({
+        const page = Math.max(1, Number(req.query.page) || 1);
+        const limit = Math.min(200, Math.max(0, Number(req.query.limit) || 0));
+        const busca = String(req.query.search || '').trim();
+        const perfil = String(req.query.perfil || '').trim();
+        const filtros = [];
+        if (busca) {
+            filtros.push((0, drizzle_orm_1.or)((0, drizzle_orm_1.ilike)(schema_1.usuarios.nome, `%${busca}%`), (0, drizzle_orm_1.ilike)(schema_1.usuarios.email, `%${busca}%`), (0, drizzle_orm_1.ilike)(schema_1.usuarios.matricula, `%${busca}%`)));
+        }
+        if (perfil && perfil !== 'todos')
+            filtros.push((0, drizzle_orm_1.eq)(schema_1.usuarios.perfil, perfil));
+        const whereClause = filtros.length ? (0, drizzle_orm_1.and)(...filtros) : undefined;
+        let query = connection_1.db.select({
             id: schema_1.usuarios.id,
             nome: schema_1.usuarios.nome,
             email: schema_1.usuarios.email,
@@ -46,7 +57,22 @@ router.get('/', async (req, res) => {
             turma: schema_1.usuarios.turma,
             perfil: schema_1.usuarios.perfil,
             criadoEm: schema_1.usuarios.criadoEm,
-        }).from(schema_1.usuarios);
+        }).from(schema_1.usuarios).$dynamic();
+        if (whereClause)
+            query = query.where(whereClause);
+        query = query.orderBy((0, drizzle_orm_1.asc)(schema_1.usuarios.nome));
+        const todos = limit > 0
+            ? await query.limit(limit).offset((page - 1) * limit)
+            : await query;
+        if (limit > 0) {
+            let totalQuery = connection_1.db.select({ total: (0, drizzle_orm_1.count)() }).from(schema_1.usuarios).$dynamic();
+            if (whereClause)
+                totalQuery = totalQuery.where(whereClause);
+            const totalRows = await totalQuery;
+            res.setHeader('X-Total-Count', String(totalRows[0]?.total || 0));
+            res.setHeader('X-Page', String(page));
+            res.setHeader('X-Limit', String(limit));
+        }
         res.json(todos);
     }
     catch (err) {
@@ -188,6 +214,43 @@ router.get('/email/:email', async (req, res) => {
     }
     catch (err) {
         res.status(500).json({ erro: 'Erro ao buscar usuario' });
+    }
+});
+router.get('/:id/emprestimos', auth_1.autenticarBibliotecario, async (req, res) => {
+    try {
+        const usuarioId = Number(req.params.id);
+        const limit = Math.min(200, Math.max(0, Number(req.query.limit) || 0));
+        const statusCalculado = (0, drizzle_orm_1.sql) `
+      CASE
+        WHEN ${schema_1.emprestimos.status} = 'devolvido' THEN 'devolvido'
+        WHEN ${schema_1.emprestimos.status} = 'retirado' AND ${schema_1.emprestimos.dataDevolucao} < NOW() THEN 'atrasado'
+        ELSE ${schema_1.emprestimos.status}
+      END
+    `;
+        let query = connection_1.db.select({
+            id: schema_1.emprestimos.id,
+            usuarioId: schema_1.emprestimos.usuarioId,
+            livroId: schema_1.emprestimos.livroId,
+            status: statusCalculado,
+            dataReserva: schema_1.emprestimos.dataReserva,
+            dataRetirada: schema_1.emprestimos.dataRetirada,
+            dataDevolucao: schema_1.emprestimos.dataDevolucao,
+            renovado: schema_1.emprestimos.renovado,
+            livroTitulo: schema_1.livros.titulo,
+            livroAutor: schema_1.livros.autor,
+            livroGenero: schema_1.livros.genero,
+            livroCapa: schema_1.livros.capa,
+        })
+            .from(schema_1.emprestimos)
+            .leftJoin(schema_1.livros, (0, drizzle_orm_1.eq)(schema_1.emprestimos.livroId, schema_1.livros.id))
+            .where((0, drizzle_orm_1.eq)(schema_1.emprestimos.usuarioId, usuarioId))
+            .$dynamic();
+        query = query.orderBy((0, drizzle_orm_1.desc)(schema_1.emprestimos.dataReserva), (0, drizzle_orm_1.desc)(schema_1.emprestimos.id));
+        const historico = limit > 0 ? await query.limit(limit) : await query;
+        res.json(historico);
+    }
+    catch (err) {
+        res.status(500).json({ erro: 'Erro ao carregar histórico do usuário' });
     }
 });
 router.get('/deletar-conta', (_req, res) => {
@@ -377,6 +440,47 @@ router.delete('/deletar-conta', auth_1.autenticar, async (req, res) => {
     }
     catch (err) {
         res.status(500).json({ erro: 'Erro ao excluir conta' });
+    }
+});
+router.put('/:id', auth_1.autenticarBibliotecario, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const { nome, email, matricula, turma, perfil, senha } = req.body;
+        const dados = {};
+        if (nome !== undefined)
+            dados.nome = nome;
+        if (email !== undefined)
+            dados.email = email.toLowerCase().trim();
+        if (matricula !== undefined)
+            dados.matricula = matricula;
+        if (turma !== undefined)
+            dados.turma = turma;
+        if (perfil !== undefined)
+            dados.perfil = perfil;
+        if (senha && senha.length >= 6)
+            dados.senha = await bcryptjs_1.default.hash(senha, 10);
+        if (Object.keys(dados).length === 0) {
+            return res.status(400).json({ erro: 'Nenhum campo válido para atualizar' });
+        }
+        const atualizado = await connection_1.db.update(schema_1.usuarios)
+            .set(dados)
+            .where((0, drizzle_orm_1.eq)(schema_1.usuarios.id, id))
+            .returning({
+            id: schema_1.usuarios.id,
+            nome: schema_1.usuarios.nome,
+            email: schema_1.usuarios.email,
+            matricula: schema_1.usuarios.matricula,
+            turma: schema_1.usuarios.turma,
+            perfil: schema_1.usuarios.perfil,
+            criadoEm: schema_1.usuarios.criadoEm,
+        });
+        if (!atualizado.length) {
+            return res.status(404).json({ erro: 'Usuário não encontrado' });
+        }
+        res.json(atualizado[0]);
+    }
+    catch (err) {
+        res.status(500).json({ erro: 'Erro ao atualizar usuário' });
     }
 });
 router.delete('/:id', async (req, res) => {

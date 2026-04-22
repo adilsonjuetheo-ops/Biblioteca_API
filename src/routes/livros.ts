@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { db } from '../db/connection';
 import { livros } from '../db/schema';
-import { eq } from 'drizzle-orm';
+import { and, asc, count, eq, ilike, or, sql } from 'drizzle-orm';
 import { livrosCache } from '../cache';
 
 const router = Router();
@@ -23,17 +23,57 @@ router.get('/', async (req, res) => {
   try {
     const page = Math.max(1, Number(req.query.page) || 1);
     const limit = Math.min(200, Math.max(0, Number(req.query.limit) || 0));
-    const cacheKey = `livros:p${page}:l${limit}`;
+    const busca = String(req.query.search || '').trim();
+    const genero = String(req.query.genero || '').trim();
+    const autor = String(req.query.autor || '').trim();
+    const somenteDisponiveis = req.query.somenteDisponiveis === 'true';
+    const incluirTotal = req.query.incluirTotal === 'true';
+    const cacheKey = `livros:p${page}:l${limit}:s${busca}:g${genero}:a${autor}:d${somenteDisponiveis}`;
 
     const cached = livrosCache.get(cacheKey);
-    if (cached) return res.json(cached);
+    if (cached) {
+      if (Array.isArray(cached)) {
+        return res.json(cached);
+      }
+      const cacheObj = cached as { items: unknown[]; total: number };
+      if (incluirTotal) {
+        res.setHeader('X-Total-Count', String(cacheObj.total));
+      }
+      return res.json(cacheObj.items);
+    }
 
-    const query = db.select(CAMPOS_LISTA).from(livros);
+    const filtros = [];
+    if (busca) {
+      filtros.push(or(
+        ilike(livros.titulo, `%${busca}%`),
+        ilike(livros.autor, `%${busca}%`),
+        ilike(livros.isbn, `%${busca}%`)
+      ));
+    }
+    if (genero) filtros.push(eq(livros.genero, genero));
+    if (autor) filtros.push(ilike(livros.autor, `%${autor}%`));
+    if (somenteDisponiveis) filtros.push(sql`${livros.disponiveis} > 0`);
+    const whereClause = filtros.length ? and(...filtros) : undefined;
+
+    let query = db.select(CAMPOS_LISTA).from(livros).$dynamic();
+    if (whereClause) query = query.where(whereClause);
+    query = query.orderBy(asc(livros.titulo));
     const resultado = limit > 0
       ? await query.limit(limit).offset((page - 1) * limit)
       : await query;
 
-    livrosCache.set(cacheKey, resultado);
+    let total = resultado.length;
+    if (limit > 0 || incluirTotal) {
+      let totalQuery = db.select({ total: count() }).from(livros).$dynamic();
+      if (whereClause) totalQuery = totalQuery.where(whereClause);
+      const totalRows = await totalQuery;
+      total = Number(totalRows[0]?.total || 0);
+      res.setHeader('X-Total-Count', String(total));
+      res.setHeader('X-Page', String(page));
+      res.setHeader('X-Limit', String(limit));
+    }
+
+    livrosCache.set(cacheKey, { items: resultado, total });
     res.json(resultado);
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao buscar livros' });

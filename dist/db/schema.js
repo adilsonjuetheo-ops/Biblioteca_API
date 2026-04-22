@@ -22,6 +22,7 @@ exports.livros = (0, pg_core_1.pgTable)('livros', {
     totalExemplares: (0, pg_core_1.integer)('total_exemplares').default(1),
     disponiveis: (0, pg_core_1.integer)('disponiveis').default(1),
     capa: (0, pg_core_1.text)('capa'),
+    prateleira: (0, pg_core_1.text)('prateleira'),
     ativo: (0, pg_core_1.boolean)('ativo').default(true),
     criadoEm: (0, pg_core_1.timestamp)('criado_em').defaultNow(),
 });

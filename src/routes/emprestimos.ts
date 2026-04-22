@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import { db } from '../db/connection';
 import { emprestimos, livros, usuarios } from '../db/schema';
-import { eq, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, ilike, or, sql } from 'drizzle-orm';
 import { pool } from '../db/connection';
 import crypto from 'crypto';
 import { autenticarBibliotecario } from '../middleware/auth';
+import { livrosCache } from '../cache';
 
 const router = Router();
 
@@ -21,15 +22,76 @@ function calcularStatus(emp: {
   return emp.status;
 }
 
+const statusCalculadoSql = sql<string>`
+  CASE
+    WHEN ${emprestimos.status} = 'devolvido' THEN 'devolvido'
+    WHEN ${emprestimos.status} = 'retirado' AND ${emprestimos.dataDevolucao} < NOW() THEN 'atrasado'
+    ELSE ${emprestimos.status}
+  END
+`;
+
+async function buscarEmprestimoDetalhado(id: number) {
+  const rows = await db
+    .select({
+      id: emprestimos.id,
+      usuarioId: emprestimos.usuarioId,
+      livroId: emprestimos.livroId,
+      status: statusCalculadoSql,
+      dataReserva: emprestimos.dataReserva,
+      dataRetirada: emprestimos.dataRetirada,
+      dataDevolucao: emprestimos.dataDevolucao,
+      renovado: emprestimos.renovado,
+      livroTitulo: livros.titulo,
+      livroAutor: livros.autor,
+      livroGenero: livros.genero,
+      livroCapa: livros.capa,
+      usuarioNome: usuarios.nome,
+      usuarioTurma: usuarios.turma,
+      usuarioMatricula: usuarios.matricula,
+    })
+    .from(emprestimos)
+    .leftJoin(livros, eq(emprestimos.livroId, livros.id))
+    .leftJoin(usuarios, eq(emprestimos.usuarioId, usuarios.id))
+    .where(eq(emprestimos.id, id));
+
+  return rows[0] || null;
+}
+
 router.get('/', async (req, res) => {
   try {
-    const todos = await db
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(200, Math.max(0, Number(req.query.limit) || 0));
+    const busca = String(req.query.search || '').trim();
+    const status = String(req.query.status || '').trim();
+    const usuarioId = Number(req.query.usuarioId) || 0;
+    const turma = String(req.query.turma || '').trim();
+    const livroId = Number(req.query.livroId) || 0;
+
+    const filtros = [];
+    if (usuarioId > 0) filtros.push(eq(emprestimos.usuarioId, usuarioId));
+    if (livroId > 0) filtros.push(eq(emprestimos.livroId, livroId));
+    if (turma) filtros.push(eq(usuarios.turma, turma));
+    if (busca) {
+      filtros.push(or(
+        ilike(usuarios.nome, `%${busca}%`),
+        ilike(usuarios.matricula, `%${busca}%`),
+        ilike(livros.titulo, `%${busca}%`),
+        ilike(livros.autor, `%${busca}%`)
+      ));
+    }
+    if (status && status !== 'todos') {
+      filtros.push(sql`${statusCalculadoSql} = ${status}`);
+    }
+    const whereClause = filtros.length ? and(...filtros) : undefined;
+
+    let query = db
       .select({
         id: emprestimos.id,
         usuarioId: emprestimos.usuarioId,
         livroId: emprestimos.livroId,
-        status: emprestimos.status,
+        status: statusCalculadoSql,
         dataReserva: emprestimos.dataReserva,
+        dataRetirada: emprestimos.dataRetirada,
         dataDevolucao: emprestimos.dataDevolucao,
         renovado: emprestimos.renovado,
         livroTitulo: livros.titulo,
@@ -42,14 +104,29 @@ router.get('/', async (req, res) => {
       })
       .from(emprestimos)
       .leftJoin(livros, eq(emprestimos.livroId, livros.id))
-      .leftJoin(usuarios, eq(emprestimos.usuarioId, usuarios.id));
+      .leftJoin(usuarios, eq(emprestimos.usuarioId, usuarios.id))
+      .$dynamic();
 
-    const comStatusCalculado = todos.map(emp => ({
-      ...emp,
-      status: calcularStatus(emp),
-    }));
+    if (whereClause) query = query.where(whereClause);
+    query = query.orderBy(desc(emprestimos.dataReserva), desc(emprestimos.id));
 
-    res.json(comStatusCalculado);
+    const todos = limit > 0
+      ? await query.limit(limit).offset((page - 1) * limit)
+      : await query;
+
+    if (limit > 0) {
+      let totalQuery = db.select({ total: count() }).from(emprestimos)
+        .leftJoin(livros, eq(emprestimos.livroId, livros.id))
+        .leftJoin(usuarios, eq(emprestimos.usuarioId, usuarios.id))
+        .$dynamic();
+      if (whereClause) totalQuery = totalQuery.where(whereClause);
+      const totalRows = await totalQuery;
+      res.setHeader('X-Total-Count', String(totalRows[0]?.total || 0));
+      res.setHeader('X-Page', String(page));
+      res.setHeader('X-Limit', String(limit));
+    }
+
+    res.json(todos);
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao buscar empréstimos' });
   }
@@ -62,13 +139,29 @@ router.post('/', async (req, res) => {
     const usuarioId = req.usuarioAutenticado?.id;
     if (!usuarioId) return res.status(401).json({ erro: 'Usuário não autenticado' });
     if (!livroId) return res.status(400).json({ erro: 'livroId é obrigatório' });
+
+    const resultadoLivro = await db.select({
+      id: livros.id,
+      disponiveis: livros.disponiveis,
+    }).from(livros).where(eq(livros.id, Number(livroId)));
+
+    if (!resultadoLivro.length) {
+      return res.status(404).json({ erro: 'Livro não encontrado' });
+    }
+    if ((resultadoLivro[0].disponiveis || 0) <= 0) {
+      return res.status(400).json({ erro: 'Não há exemplares disponíveis para reserva' });
+    }
+
     const novo = await db.insert(emprestimos)
       .values({ usuarioId, livroId, status: 'reservado' })
-      .returning();
+      .returning({ id: emprestimos.id });
     await db.update(livros)
-      .set({ disponiveis: sql`${livros.disponiveis} - 1` })
-      .where(eq(livros.id, livroId));
-    res.status(201).json(novo[0]);
+      .set({ disponiveis: sql`GREATEST(${livros.disponiveis} - 1, 0)` })
+      .where(eq(livros.id, Number(livroId)));
+
+    livrosCache.flushAll();
+    const detalhado = await buscarEmprestimoDetalhado(novo[0].id);
+    res.status(201).json(detalhado);
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao criar reserva' });
   }
@@ -98,6 +191,7 @@ router.post('/reparar-orfaos', async (req, res) => {
     }
     // Remove os órfãos
     await pool.query(`DELETE FROM emprestimos WHERE usuario_id IS NULL`);
+    livrosCache.flushAll();
     res.json({
       reparados: orfaos.rows.length,
       mensagem: `${orfaos.rows.length} empréstimo(s) sem dono removido(s) e exemplares devolvidos ao acervo.`,
@@ -152,6 +246,7 @@ router.patch('/retirada-qr', async (req, res) => {
        WHERE id = $1`,
       [emp.id, dataDevolucao]
     );
+    livrosCache.flushAll();
 
     res.json({
       ok: true,
@@ -173,14 +268,21 @@ router.patch('/retirada-qr', async (req, res) => {
 
 router.patch('/:id/devolver', async (req, res) => {
   try {
+    const id = Number(req.params.id);
+    const atual = await db.select().from(emprestimos).where(eq(emprestimos.id, id));
+    if (!atual.length) {
+      return res.status(404).json({ erro: 'Empréstimo não encontrado' });
+    }
     const emp = await db.update(emprestimos)
       .set({ status: 'devolvido', dataDevolucao: new Date() })
-      .where(eq(emprestimos.id, Number(req.params.id)))
+      .where(eq(emprestimos.id, id))
       .returning();
     await db.update(livros)
-      .set({ disponiveis: sql`${livros.disponiveis} + 1` })
+      .set({ disponiveis: sql`LEAST(${livros.disponiveis} + 1, ${livros.totalExemplares})` })
       .where(eq(livros.id, emp[0].livroId!));
-    res.json(emp[0]);
+    livrosCache.flushAll();
+    const detalhado = await buscarEmprestimoDetalhado(id);
+    res.json(detalhado);
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao registrar devolução' });
   }
@@ -188,13 +290,18 @@ router.patch('/:id/devolver', async (req, res) => {
 
 router.patch('/:id/retirar', async (req, res) => {
   try {
+    const id = Number(req.params.id);
     const dataDevolucao = new Date();
     dataDevolucao.setDate(dataDevolucao.getDate() + 8);
     const emp = await db.update(emprestimos)
       .set({ status: 'retirado', dataRetirada: new Date(), dataDevolucao })
-      .where(eq(emprestimos.id, Number(req.params.id)))
+      .where(eq(emprestimos.id, id))
       .returning();
-    res.json({ ...emp[0], status: calcularStatus(emp[0]) });
+    if (!emp.length) {
+      return res.status(404).json({ erro: 'Empréstimo não encontrado' });
+    }
+    const detalhado = await buscarEmprestimoDetalhado(id);
+    res.json(detalhado);
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao registrar retirada' });
   }
@@ -220,7 +327,8 @@ router.patch('/:id/renovar', async (req, res) => {
       .set({ renovado: true, dataDevolucao: novaData })
       .where(eq(emprestimos.id, Number(req.params.id)))
       .returning();
-    res.json({ ...atualizado[0], status: calcularStatus(atualizado[0]) });
+    const detalhado = await buscarEmprestimoDetalhado(atualizado[0].id);
+    res.json(detalhado);
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao renovar empréstimo' });
   }
@@ -265,13 +373,14 @@ router.delete('/:id', autenticarBibliotecario, async (req, res) => {
 
     if (['reservado', 'retirado', 'atrasado'].includes(status)) {
       await db.update(livros)
-        .set({ disponiveis: sql`${livros.disponiveis} + 1` })
+        .set({ disponiveis: sql`LEAST(${livros.disponiveis} + 1, ${livros.totalExemplares})` })
         .where(eq(livros.id, emp.livroId!));
     }
 
     await db.delete(emprestimos).where(eq(emprestimos.id, id));
+    livrosCache.flushAll();
 
-    res.json({ mensagem: 'Empréstimo excluído com sucesso' });
+    res.json({ mensagem: 'Empréstimo excluído com sucesso', id });
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao excluir empréstimo' });
   }

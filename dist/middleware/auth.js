@@ -26,9 +26,10 @@ function autenticar(req, res, next) {
         return res.status(401).json({ erro: 'Token inválido ou expirado' });
     }
 }
+const PERFIS_ADMIN = ['bibliotecario', 'coordenacao'];
 function autenticarBibliotecario(req, res, next) {
     autenticar(req, res, () => {
-        if (req.usuarioAutenticado?.perfil !== 'bibliotecario') {
+        if (!PERFIS_ADMIN.includes(req.usuarioAutenticado?.perfil ?? '')) {
             return res.status(403).json({ erro: 'Acesso restrito ao bibliotecário' });
         }
         next();

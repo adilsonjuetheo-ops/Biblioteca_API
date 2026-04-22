@@ -9,6 +9,8 @@ const schema_1 = require("../db/schema");
 const drizzle_orm_1 = require("drizzle-orm");
 const connection_2 = require("../db/connection");
 const crypto_1 = __importDefault(require("crypto"));
+const auth_1 = require("../middleware/auth");
+const cache_1 = require("../cache");
 const router = (0, express_1.Router)();
 // Helpers
 function calcularStatus(emp) {
@@ -21,15 +23,69 @@ function calcularStatus(emp) {
     }
     return emp.status;
 }
+const statusCalculadoSql = (0, drizzle_orm_1.sql) `
+  CASE
+    WHEN ${schema_1.emprestimos.status} = 'devolvido' THEN 'devolvido'
+    WHEN ${schema_1.emprestimos.status} = 'retirado' AND ${schema_1.emprestimos.dataDevolucao} < NOW() THEN 'atrasado'
+    ELSE ${schema_1.emprestimos.status}
+  END
+`;
+async function buscarEmprestimoDetalhado(id) {
+    const rows = await connection_1.db
+        .select({
+        id: schema_1.emprestimos.id,
+        usuarioId: schema_1.emprestimos.usuarioId,
+        livroId: schema_1.emprestimos.livroId,
+        status: statusCalculadoSql,
+        dataReserva: schema_1.emprestimos.dataReserva,
+        dataRetirada: schema_1.emprestimos.dataRetirada,
+        dataDevolucao: schema_1.emprestimos.dataDevolucao,
+        renovado: schema_1.emprestimos.renovado,
+        livroTitulo: schema_1.livros.titulo,
+        livroAutor: schema_1.livros.autor,
+        livroGenero: schema_1.livros.genero,
+        livroCapa: schema_1.livros.capa,
+        usuarioNome: schema_1.usuarios.nome,
+        usuarioTurma: schema_1.usuarios.turma,
+        usuarioMatricula: schema_1.usuarios.matricula,
+    })
+        .from(schema_1.emprestimos)
+        .leftJoin(schema_1.livros, (0, drizzle_orm_1.eq)(schema_1.emprestimos.livroId, schema_1.livros.id))
+        .leftJoin(schema_1.usuarios, (0, drizzle_orm_1.eq)(schema_1.emprestimos.usuarioId, schema_1.usuarios.id))
+        .where((0, drizzle_orm_1.eq)(schema_1.emprestimos.id, id));
+    return rows[0] || null;
+}
 router.get('/', async (req, res) => {
     try {
-        const todos = await connection_1.db
+        const page = Math.max(1, Number(req.query.page) || 1);
+        const limit = Math.min(200, Math.max(0, Number(req.query.limit) || 0));
+        const busca = String(req.query.search || '').trim();
+        const status = String(req.query.status || '').trim();
+        const usuarioId = Number(req.query.usuarioId) || 0;
+        const turma = String(req.query.turma || '').trim();
+        const livroId = Number(req.query.livroId) || 0;
+        const filtros = [];
+        if (usuarioId > 0)
+            filtros.push((0, drizzle_orm_1.eq)(schema_1.emprestimos.usuarioId, usuarioId));
+        if (livroId > 0)
+            filtros.push((0, drizzle_orm_1.eq)(schema_1.emprestimos.livroId, livroId));
+        if (turma)
+            filtros.push((0, drizzle_orm_1.eq)(schema_1.usuarios.turma, turma));
+        if (busca) {
+            filtros.push((0, drizzle_orm_1.or)((0, drizzle_orm_1.ilike)(schema_1.usuarios.nome, `%${busca}%`), (0, drizzle_orm_1.ilike)(schema_1.usuarios.matricula, `%${busca}%`), (0, drizzle_orm_1.ilike)(schema_1.livros.titulo, `%${busca}%`), (0, drizzle_orm_1.ilike)(schema_1.livros.autor, `%${busca}%`)));
+        }
+        if (status && status !== 'todos') {
+            filtros.push((0, drizzle_orm_1.sql) `${statusCalculadoSql} = ${status}`);
+        }
+        const whereClause = filtros.length ? (0, drizzle_orm_1.and)(...filtros) : undefined;
+        let query = connection_1.db
             .select({
             id: schema_1.emprestimos.id,
             usuarioId: schema_1.emprestimos.usuarioId,
             livroId: schema_1.emprestimos.livroId,
-            status: schema_1.emprestimos.status,
+            status: statusCalculadoSql,
             dataReserva: schema_1.emprestimos.dataReserva,
+            dataRetirada: schema_1.emprestimos.dataRetirada,
             dataDevolucao: schema_1.emprestimos.dataDevolucao,
             renovado: schema_1.emprestimos.renovado,
             livroTitulo: schema_1.livros.titulo,
@@ -42,12 +98,27 @@ router.get('/', async (req, res) => {
         })
             .from(schema_1.emprestimos)
             .leftJoin(schema_1.livros, (0, drizzle_orm_1.eq)(schema_1.emprestimos.livroId, schema_1.livros.id))
-            .leftJoin(schema_1.usuarios, (0, drizzle_orm_1.eq)(schema_1.emprestimos.usuarioId, schema_1.usuarios.id));
-        const comStatusCalculado = todos.map(emp => ({
-            ...emp,
-            status: calcularStatus(emp),
-        }));
-        res.json(comStatusCalculado);
+            .leftJoin(schema_1.usuarios, (0, drizzle_orm_1.eq)(schema_1.emprestimos.usuarioId, schema_1.usuarios.id))
+            .$dynamic();
+        if (whereClause)
+            query = query.where(whereClause);
+        query = query.orderBy((0, drizzle_orm_1.desc)(schema_1.emprestimos.dataReserva), (0, drizzle_orm_1.desc)(schema_1.emprestimos.id));
+        const todos = limit > 0
+            ? await query.limit(limit).offset((page - 1) * limit)
+            : await query;
+        if (limit > 0) {
+            let totalQuery = connection_1.db.select({ total: (0, drizzle_orm_1.count)() }).from(schema_1.emprestimos)
+                .leftJoin(schema_1.livros, (0, drizzle_orm_1.eq)(schema_1.emprestimos.livroId, schema_1.livros.id))
+                .leftJoin(schema_1.usuarios, (0, drizzle_orm_1.eq)(schema_1.emprestimos.usuarioId, schema_1.usuarios.id))
+                .$dynamic();
+            if (whereClause)
+                totalQuery = totalQuery.where(whereClause);
+            const totalRows = await totalQuery;
+            res.setHeader('X-Total-Count', String(totalRows[0]?.total || 0));
+            res.setHeader('X-Page', String(page));
+            res.setHeader('X-Limit', String(limit));
+        }
+        res.json(todos);
     }
     catch (err) {
         res.status(500).json({ erro: 'Erro ao buscar empréstimos' });
@@ -62,13 +133,25 @@ router.post('/', async (req, res) => {
             return res.status(401).json({ erro: 'Usuário não autenticado' });
         if (!livroId)
             return res.status(400).json({ erro: 'livroId é obrigatório' });
+        const resultadoLivro = await connection_1.db.select({
+            id: schema_1.livros.id,
+            disponiveis: schema_1.livros.disponiveis,
+        }).from(schema_1.livros).where((0, drizzle_orm_1.eq)(schema_1.livros.id, Number(livroId)));
+        if (!resultadoLivro.length) {
+            return res.status(404).json({ erro: 'Livro não encontrado' });
+        }
+        if ((resultadoLivro[0].disponiveis || 0) <= 0) {
+            return res.status(400).json({ erro: 'Não há exemplares disponíveis para reserva' });
+        }
         const novo = await connection_1.db.insert(schema_1.emprestimos)
             .values({ usuarioId, livroId, status: 'reservado' })
-            .returning();
+            .returning({ id: schema_1.emprestimos.id });
         await connection_1.db.update(schema_1.livros)
-            .set({ disponiveis: (0, drizzle_orm_1.sql) `${schema_1.livros.disponiveis} - 1` })
-            .where((0, drizzle_orm_1.eq)(schema_1.livros.id, livroId));
-        res.status(201).json(novo[0]);
+            .set({ disponiveis: (0, drizzle_orm_1.sql) `GREATEST(${schema_1.livros.disponiveis} - 1, 0)` })
+            .where((0, drizzle_orm_1.eq)(schema_1.livros.id, Number(livroId)));
+        cache_1.livrosCache.flushAll();
+        const detalhado = await buscarEmprestimoDetalhado(novo[0].id);
+        res.status(201).json(detalhado);
     }
     catch (err) {
         res.status(500).json({ erro: 'Erro ao criar reserva' });
@@ -93,6 +176,7 @@ router.post('/reparar-orfaos', async (req, res) => {
         }
         // Remove os órfãos
         await connection_2.pool.query(`DELETE FROM emprestimos WHERE usuario_id IS NULL`);
+        cache_1.livrosCache.flushAll();
         res.json({
             reparados: orfaos.rows.length,
             mensagem: `${orfaos.rows.length} empréstimo(s) sem dono removido(s) e exemplares devolvidos ao acervo.`,
@@ -133,6 +217,7 @@ router.patch('/retirada-qr', async (req, res) => {
            retirada_qr_usado_em = NOW(),
            retirada_qr_codigo = NULL
        WHERE id = $1`, [emp.id, dataDevolucao]);
+        cache_1.livrosCache.flushAll();
         res.json({
             ok: true,
             emprestimo: {
@@ -153,14 +238,21 @@ router.patch('/retirada-qr', async (req, res) => {
 });
 router.patch('/:id/devolver', async (req, res) => {
     try {
+        const id = Number(req.params.id);
+        const atual = await connection_1.db.select().from(schema_1.emprestimos).where((0, drizzle_orm_1.eq)(schema_1.emprestimos.id, id));
+        if (!atual.length) {
+            return res.status(404).json({ erro: 'Empréstimo não encontrado' });
+        }
         const emp = await connection_1.db.update(schema_1.emprestimos)
             .set({ status: 'devolvido', dataDevolucao: new Date() })
-            .where((0, drizzle_orm_1.eq)(schema_1.emprestimos.id, Number(req.params.id)))
+            .where((0, drizzle_orm_1.eq)(schema_1.emprestimos.id, id))
             .returning();
         await connection_1.db.update(schema_1.livros)
-            .set({ disponiveis: (0, drizzle_orm_1.sql) `${schema_1.livros.disponiveis} + 1` })
+            .set({ disponiveis: (0, drizzle_orm_1.sql) `LEAST(${schema_1.livros.disponiveis} + 1, ${schema_1.livros.totalExemplares})` })
             .where((0, drizzle_orm_1.eq)(schema_1.livros.id, emp[0].livroId));
-        res.json(emp[0]);
+        cache_1.livrosCache.flushAll();
+        const detalhado = await buscarEmprestimoDetalhado(id);
+        res.json(detalhado);
     }
     catch (err) {
         res.status(500).json({ erro: 'Erro ao registrar devolução' });
@@ -168,13 +260,18 @@ router.patch('/:id/devolver', async (req, res) => {
 });
 router.patch('/:id/retirar', async (req, res) => {
     try {
+        const id = Number(req.params.id);
         const dataDevolucao = new Date();
         dataDevolucao.setDate(dataDevolucao.getDate() + 8);
         const emp = await connection_1.db.update(schema_1.emprestimos)
             .set({ status: 'retirado', dataRetirada: new Date(), dataDevolucao })
-            .where((0, drizzle_orm_1.eq)(schema_1.emprestimos.id, Number(req.params.id)))
+            .where((0, drizzle_orm_1.eq)(schema_1.emprestimos.id, id))
             .returning();
-        res.json({ ...emp[0], status: calcularStatus(emp[0]) });
+        if (!emp.length) {
+            return res.status(404).json({ erro: 'Empréstimo não encontrado' });
+        }
+        const detalhado = await buscarEmprestimoDetalhado(id);
+        res.json(detalhado);
     }
     catch (err) {
         res.status(500).json({ erro: 'Erro ao registrar retirada' });
@@ -200,7 +297,8 @@ router.patch('/:id/renovar', async (req, res) => {
             .set({ renovado: true, dataDevolucao: novaData })
             .where((0, drizzle_orm_1.eq)(schema_1.emprestimos.id, Number(req.params.id)))
             .returning();
-        res.json({ ...atualizado[0], status: calcularStatus(atualizado[0]) });
+        const detalhado = await buscarEmprestimoDetalhado(atualizado[0].id);
+        res.json(detalhado);
     }
     catch (err) {
         res.status(500).json({ erro: 'Erro ao renovar empréstimo' });
@@ -228,6 +326,28 @@ router.post('/:id/qr-retirada', async (req, res) => {
     }
     catch {
         res.status(500).json({ erro: 'Erro ao gerar QR de retirada' });
+    }
+});
+router.delete('/:id', auth_1.autenticarBibliotecario, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const resultado = await connection_1.db.select().from(schema_1.emprestimos).where((0, drizzle_orm_1.eq)(schema_1.emprestimos.id, id));
+        if (!resultado.length) {
+            return res.status(404).json({ erro: 'Empréstimo não encontrado' });
+        }
+        const emp = resultado[0];
+        const status = calcularStatus(emp);
+        if (['reservado', 'retirado', 'atrasado'].includes(status)) {
+            await connection_1.db.update(schema_1.livros)
+                .set({ disponiveis: (0, drizzle_orm_1.sql) `LEAST(${schema_1.livros.disponiveis} + 1, ${schema_1.livros.totalExemplares})` })
+                .where((0, drizzle_orm_1.eq)(schema_1.livros.id, emp.livroId));
+        }
+        await connection_1.db.delete(schema_1.emprestimos).where((0, drizzle_orm_1.eq)(schema_1.emprestimos.id, id));
+        cache_1.livrosCache.flushAll();
+        res.json({ mensagem: 'Empréstimo excluído com sucesso', id });
+    }
+    catch (err) {
+        res.status(500).json({ erro: 'Erro ao excluir empréstimo' });
     }
 });
 exports.default = router;
