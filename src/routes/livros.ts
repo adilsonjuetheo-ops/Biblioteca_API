@@ -13,6 +13,7 @@ const CAMPOS_LISTA = {
   genero: livros.genero,
   sinopse: livros.sinopse,
   capa: livros.capa,
+  prateleira: livros.prateleira,
   totalExemplares: livros.totalExemplares,
   disponiveis: livros.disponiveis,
 };
