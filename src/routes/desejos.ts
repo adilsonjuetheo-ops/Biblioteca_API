@@ -8,7 +8,8 @@ const router = Router();
 router.get('/', async (req, res) => {
   try {
     const { usuarioId } = req.query;
-    const rows = await db
+
+    let query = db
       .select({
         id: desejos.id,
         usuarioId: desejos.usuarioId,
@@ -21,13 +22,12 @@ router.get('/', async (req, res) => {
         livroDisponiveis: livros.disponiveis,
       })
       .from(desejos)
-      .leftJoin(livros, eq(desejos.livroId, livros.id));
+      .leftJoin(livros, eq(desejos.livroId, livros.id))
+      .$dynamic();
 
-    const filtered = usuarioId
-      ? rows.filter((r) => String(r.usuarioId) === String(usuarioId))
-      : rows;
+    if (usuarioId) query = query.where(eq(desejos.usuarioId, Number(usuarioId)));
 
-    res.json(filtered);
+    res.json(await query);
   } catch {
     res.status(500).json({ erro: 'Erro ao buscar desejos' });
   }

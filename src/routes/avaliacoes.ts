@@ -8,6 +8,10 @@ const router = Router();
 router.get('/', async (req, res) => {
   try {
     const { usuarioId, livroId } = req.query;
+    const filtros = [];
+    if (usuarioId) filtros.push(eq(avaliacoes.usuarioId, Number(usuarioId)));
+    if (livroId) filtros.push(eq(avaliacoes.livroId, Number(livroId)));
+
     let query = db
       .select({
         id: avaliacoes.id,
@@ -21,17 +25,12 @@ router.get('/', async (req, res) => {
       })
       .from(avaliacoes)
       .leftJoin(usuarios, eq(avaliacoes.usuarioId, usuarios.id))
-      .leftJoin(livros, eq(avaliacoes.livroId, livros.id));
+      .leftJoin(livros, eq(avaliacoes.livroId, livros.id))
+      .$dynamic();
 
-    const rows = await query;
+    if (filtros.length) query = query.where(and(...filtros));
 
-    const filtered = rows.filter((r) => {
-      if (usuarioId && String(r.usuarioId) !== String(usuarioId)) return false;
-      if (livroId && String(r.livroId) !== String(livroId)) return false;
-      return true;
-    });
-
-    res.json(filtered);
+    res.json(await query);
   } catch {
     res.status(500).json({ erro: 'Erro ao buscar avaliações' });
   }
