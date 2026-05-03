@@ -8,6 +8,7 @@ export const usuarios = pgTable('usuarios', {
   matricula: text('matricula'),
   turma: text('turma'),
   perfil: text('perfil').notNull().default('aluno'),
+  pushToken: text('push_token'),
   criadoEm: timestamp('criado_em').defaultNow(),
 });
 

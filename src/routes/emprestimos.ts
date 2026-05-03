@@ -132,6 +132,21 @@ router.get('/', async (req, res) => {
   }
 });
 
+router.get('/:id/status', async (req, res) => {
+  try {
+    const resultado = await db.select({
+      status: emprestimos.status,
+      dataDevolucao: emprestimos.dataDevolucao,
+    }).from(emprestimos).where(eq(emprestimos.id, Number(req.params.id)));
+
+    if (!resultado.length) return res.status(404).json({ erro: 'Empréstimo não encontrado' });
+
+    res.json({ status: calcularStatus(resultado[0]) });
+  } catch (err) {
+    res.status(500).json({ erro: 'Erro ao buscar status' });
+  }
+});
+
 router.post('/', async (req, res) => {
   try {
     const { livroId } = req.body;

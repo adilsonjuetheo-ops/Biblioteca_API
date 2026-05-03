@@ -449,6 +449,21 @@ router.get('/deletar-conta', (_req, res) => {
   res.send(html);
 });
 
+router.post('/push-token', autenticar, async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token || typeof token !== 'string') {
+      return res.status(400).json({ erro: 'token é obrigatório' });
+    }
+    await db.update(usuarios)
+      .set({ pushToken: token })
+      .where(eq(usuarios.id, req.usuarioAutenticado!.id));
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ erro: 'Erro ao salvar push token' });
+  }
+});
+
 router.delete('/deletar-conta', autenticar, async (req, res) => {
   try {
     const payload = req.usuarioAutenticado!;

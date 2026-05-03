@@ -52,6 +52,9 @@ async function runMigrations() {
       'ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS recuperacao_expira_em TIMESTAMP'
     );
     await pool.query(
+      'ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS push_token TEXT'
+    );
+    await pool.query(
       'ALTER TABLE livros ADD COLUMN IF NOT EXISTS prateleira TEXT'
     );
     await pool.query(
