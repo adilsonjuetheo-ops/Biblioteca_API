@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { db } from '../db/connection';
 import { livros } from '../db/schema';
 import { and, asc, count, eq, ilike, or, sql } from 'drizzle-orm';
-import { livrosCache } from '../cache';
+import { flushAllCaches, livrosCache } from '../cache';
 
 const router = Router();
 
@@ -114,7 +114,7 @@ router.post('/', async (req, res) => {
       disponiveis: total,
     }).returning();
 
-    livrosCache.flushAll();
+    flushAllCaches();
     res.status(201).json(novo[0]);
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao adicionar livro' });
@@ -144,7 +144,7 @@ router.put('/:id', async (req, res) => {
       return res.status(404).json({ erro: 'Livro não encontrado' });
     }
 
-    livrosCache.flushAll();
+    flushAllCaches();
     res.json(atualizado[0]);
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao editar livro' });
@@ -172,7 +172,7 @@ router.patch('/:id', async (req, res) => {
       .where(eq(livros.id, Number(req.params.id)))
       .returning();
 
-    livrosCache.flushAll();
+    flushAllCaches();
     res.json(atualizado[0]);
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao atualizar livro' });
@@ -197,7 +197,7 @@ router.delete('/:id', async (req, res) => {
     }
 
     await db.delete(livros).where(eq(livros.id, Number(req.params.id)));
-    livrosCache.flushAll();
+    flushAllCaches();
     res.json({ mensagem: 'Livro removido com sucesso' });
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao remover livro' });

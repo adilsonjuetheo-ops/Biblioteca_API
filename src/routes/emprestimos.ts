@@ -1,11 +1,11 @@
 import { Router } from 'express';
 import { db } from '../db/connection';
 import { emprestimos, livros, usuarios } from '../db/schema';
-import { and, asc, count, desc, eq, ilike, or, sql } from 'drizzle-orm';
+import { and, count, desc, eq, ilike, or, sql } from 'drizzle-orm';
 import { pool } from '../db/connection';
 import crypto from 'crypto';
 import { autenticarBibliotecario } from '../middleware/auth';
-import { livrosCache } from '../cache';
+import { emprestimosCache, flushAllCaches } from '../cache';
 
 const router = Router();
 
@@ -67,6 +67,10 @@ router.get('/', async (req, res) => {
     const turma = String(req.query.turma || '').trim();
     const livroId = Number(req.query.livroId) || 0;
 
+    const cacheKey = `emp:p${page}:l${limit}:s${busca}:st${status}:u${usuarioId}:t${turma}:lv${livroId}`;
+    const cached = emprestimosCache.get(cacheKey);
+    if (cached) return res.json(cached);
+
     const filtros = [];
     if (usuarioId > 0) filtros.push(eq(emprestimos.usuarioId, usuarioId));
     if (livroId > 0) filtros.push(eq(emprestimos.livroId, livroId));
@@ -126,6 +130,7 @@ router.get('/', async (req, res) => {
       res.setHeader('X-Limit', String(limit));
     }
 
+    emprestimosCache.set(cacheKey, todos);
     res.json(todos);
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao buscar empréstimos' });
@@ -174,7 +179,7 @@ router.post('/', async (req, res) => {
       .set({ disponiveis: sql`GREATEST(${livros.disponiveis} - 1, 0)` })
       .where(eq(livros.id, Number(livroId)));
 
-    livrosCache.flushAll();
+    flushAllCaches();
     const detalhado = await buscarEmprestimoDetalhado(novo[0].id);
     res.status(201).json(detalhado);
   } catch (err) {
@@ -206,7 +211,7 @@ router.post('/reparar-orfaos', async (req, res) => {
     }
     // Remove os órfãos
     await pool.query(`DELETE FROM emprestimos WHERE usuario_id IS NULL`);
-    livrosCache.flushAll();
+    flushAllCaches();
     res.json({
       reparados: orfaos.rows.length,
       mensagem: `${orfaos.rows.length} empréstimo(s) sem dono removido(s) e exemplares devolvidos ao acervo.`,
@@ -261,7 +266,7 @@ router.patch('/retirada-qr', async (req, res) => {
        WHERE id = $1`,
       [emp.id, dataDevolucao]
     );
-    livrosCache.flushAll();
+    flushAllCaches();
 
     res.json({
       ok: true,
@@ -295,7 +300,7 @@ router.patch('/:id/devolver', async (req, res) => {
     await db.update(livros)
       .set({ disponiveis: sql`LEAST(${livros.disponiveis} + 1, ${livros.totalExemplares})` })
       .where(eq(livros.id, emp[0].livroId!));
-    livrosCache.flushAll();
+    flushAllCaches();
     const detalhado = await buscarEmprestimoDetalhado(id);
     res.json(detalhado);
   } catch (err) {
@@ -393,7 +398,7 @@ router.delete('/:id', autenticarBibliotecario, async (req, res) => {
     }
 
     await db.delete(emprestimos).where(eq(emprestimos.id, id));
-    livrosCache.flushAll();
+    flushAllCaches();
 
     res.json({ mensagem: 'Empréstimo excluído com sucesso', id });
   } catch (err) {
