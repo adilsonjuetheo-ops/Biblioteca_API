@@ -12,7 +12,6 @@ const CAMPOS_LISTA = {
   autor: livros.autor,
   isbn: livros.isbn,
   genero: livros.genero,
-  sinopse: livros.sinopse,
   capa: livros.capa,
   prateleira: livros.prateleira,
   totalExemplares: livros.totalExemplares,
