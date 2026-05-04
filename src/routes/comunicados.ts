@@ -1,13 +1,23 @@
 import { Router } from 'express';
 import { db } from '../db/connection';
 import { comunicados, usuarios } from '../db/schema';
-import { eq, isNotNull } from 'drizzle-orm';
+import { and, eq, isNotNull } from 'drizzle-orm';
 
-async function enviarPushComunicado(titulo: string, mensagem: string) {
+async function enviarPushComunicado(titulo: string, mensagem: string, destinatario: string) {
   try {
+    const perfilPorDestinatario: Record<string, string | null> = {
+      alunos: 'aluno',
+      professores: 'professor',
+    };
+    const perfil = perfilPorDestinatario[destinatario] ?? null;
+
+    const filtro = perfil
+      ? and(isNotNull(usuarios.pushToken), eq(usuarios.perfil, perfil))
+      : isNotNull(usuarios.pushToken);
+
     const comToken = await db.select({ pushToken: usuarios.pushToken })
       .from(usuarios)
-      .where(isNotNull(usuarios.pushToken));
+      .where(filtro);
 
     if (!comToken.length) return;
 
@@ -49,7 +59,7 @@ router.post('/', async (req, res) => {
     const novo = await db.insert(comunicados).values({
       titulo, mensagem, autor, destinatario: destinatario || 'todos',
     }).returning();
-    enviarPushComunicado(titulo, mensagem);
+    enviarPushComunicado(titulo, mensagem, destinatario || 'todos');
     res.status(201).json(novo[0]);
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao criar comunicado' });
