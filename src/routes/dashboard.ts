@@ -1,10 +1,14 @@
 import { Router } from 'express';
 import { pool } from '../db/connection';
+import { dashboardCache } from '../cache';
 
 const router = Router();
 
 router.get('/resumo', async (_req, res) => {
   try {
+    const cached = dashboardCache.get('resumo');
+    if (cached) return res.json(cached);
+
     const [
       totalLivros,
       livrosDisponiveis,
@@ -52,7 +56,7 @@ router.get('/resumo', async (_req, res) => {
       `),
     ]);
 
-    res.json({
+    const resultado = {
       resumo: {
         totalLivros: totalLivros.rows[0]?.total || 0,
         livrosDisponiveis: livrosDisponiveis.rows[0]?.total || 0,
@@ -62,7 +66,9 @@ router.get('/resumo', async (_req, res) => {
       },
       ultimosEmprestimos: ultimosEmprestimos.rows,
       livrosMaisEmprestados: livrosMaisEmprestados.rows,
-    });
+    };
+    dashboardCache.set('resumo', resultado);
+    res.json(resultado);
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao carregar resumo do dashboard' });
   }

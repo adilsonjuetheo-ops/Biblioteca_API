@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { db } from '../db/connection';
 import { comunicados, usuarios } from '../db/schema';
 import { and, eq, isNotNull } from 'drizzle-orm';
+import { comunicadosCache } from '../cache';
 
 async function enviarPushComunicado(titulo: string, mensagem: string, destinatario: string) {
   try {
@@ -42,9 +43,14 @@ const router = Router();
 
 router.get('/', async (req, res) => {
   try {
+    const cached = comunicadosCache.get('lista');
+    if (cached) return res.json(cached);
+
     const todos = await db.select().from(comunicados)
       .orderBy(comunicados.criadoEm);
-    res.json(todos.reverse());
+    const resultado = todos.reverse();
+    comunicadosCache.set('lista', resultado);
+    res.json(resultado);
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao buscar comunicados' });
   }
@@ -59,6 +65,7 @@ router.post('/', async (req, res) => {
     const novo = await db.insert(comunicados).values({
       titulo, mensagem, autor, destinatario: destinatario || 'todos',
     }).returning();
+    comunicadosCache.flushAll();
     enviarPushComunicado(titulo, mensagem, destinatario || 'todos');
     res.status(201).json(novo[0]);
   } catch (err) {
@@ -70,6 +77,7 @@ router.delete('/:id', async (req, res) => {
   try {
     await db.delete(comunicados)
       .where(eq(comunicados.id, Number(req.params.id)));
+    comunicadosCache.flushAll();
     res.json({ mensagem: 'Comunicado removido' });
   } catch (err) {
     res.status(500).json({ erro: 'Erro ao remover comunicado' });
