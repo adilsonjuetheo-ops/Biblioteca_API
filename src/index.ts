@@ -98,6 +98,7 @@ async function runMigrations() {
   }
 }
 
+app.get('/health', (_req, res) => { res.json({ ok: true }); });
 app.get('/', (_req, res) => { res.json({ status: 'API Biblioteca funcionando!' }); });
 app.patch('/emprestimos/retirada-qr-test', (req, res) => {
   res.json({ ok: true, path: req.path, method: req.method });
