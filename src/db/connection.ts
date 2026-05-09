@@ -6,12 +6,14 @@ dotenv.config();
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
+  min: 0,
   max: 10,
-  min: 2,
-  idleTimeoutMillis: 60000,
+  idleTimeoutMillis: 20000,
   connectionTimeoutMillis: 10000,
-  keepAlive: true,
-  keepAliveInitialDelayMillis: 10000,
+});
+
+pool.on('error', (err) => {
+  console.error('[pool] idle client error:', err.message);
 });
 
 export const db = drizzle(pool);
