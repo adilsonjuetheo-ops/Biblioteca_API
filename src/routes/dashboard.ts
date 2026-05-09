@@ -48,7 +48,17 @@ router.get('/', async (req, res) => {
         .leftJoin(livros, eq(emprestimos.livroId, livros.id))
         .leftJoin(usuarios, eq(emprestimos.usuarioId, usuarios.id)),
 
-      db.select().from(livros),
+      db.select({
+        id: livros.id,
+        titulo: livros.titulo,
+        autor: livros.autor,
+        isbn: livros.isbn,
+        genero: livros.genero,
+        capa: livros.capa,
+        prateleira: livros.prateleira,
+        totalExemplares: livros.totalExemplares,
+        disponiveis: livros.disponiveis,
+      }).from(livros),
 
       db.select().from(avaliacoes),
 
