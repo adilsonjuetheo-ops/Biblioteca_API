@@ -10,7 +10,7 @@ import { emprestimosCache, flushAllCaches } from '../cache';
 const router = Router();
 
 // Helpers
-function calcularStatus(emp: {
+export function calcularStatus(emp: {
   status: string;
   dataDevolucao?: Date | string | null;
 }): string {

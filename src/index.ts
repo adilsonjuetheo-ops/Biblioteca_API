@@ -104,6 +104,9 @@ app.patch('/emprestimos/retirada-qr-test', (req, res) => {
   res.json({ ok: true, path: req.path, method: req.method });
 });
 
+// ── DASHBOARD ──
+app.use('/dashboard', autenticar, dashboardRouter);
+
 // ── USUÁRIOS — rotas públicas e protegidas ──
 app.use('/usuarios', (req: Request, res: Response, next: NextFunction) => {
   const rotasPublicas = ['/login', '/cadastro', '/recuperar-senha', '/redefinir-senha', '/deletar-conta'];
