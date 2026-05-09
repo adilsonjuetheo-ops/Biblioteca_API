@@ -15,6 +15,10 @@ router.get('/', async (req, res) => {
     const perfil = req.usuarioAutenticado?.perfil;
     const isBiblio = !!perfil && !['aluno', 'professor'].includes(perfil);
 
+    const cacheKey = `dash:${uid}:${isBiblio ? 'b' : 'u'}`;
+    const cached = dashboardCache.get(cacheKey);
+    if (cached) return res.json(cached);
+
     const [
       todosEmprestimos,
       todosLivros,
@@ -78,15 +82,17 @@ router.get('/', async (req, res) => {
       `),
     ]);
 
-    res.json({
+    const resultado = {
       livros: todosLivros,
-      emprestimos: todosEmprestimos.map(e => ({ ...e, status: calcularStatus(e) })),
+      emprestimos: todosEmprestimos.map(e => ({ ...e, status: calcularStatus(e as any) })),
       avaliacoes: todasAvaliacoes,
       desejos: todosDesejos,
       usuarios: todosUsuarios,
       comunicados: [...todosComunicados].reverse(),
       suspensoes: suspensoeResult.rows,
-    });
+    };
+    dashboardCache.set(cacheKey, resultado);
+    res.json(resultado);
   } catch (err) {
     console.error('[dashboard]', err);
     res.status(500).json({ erro: 'Erro ao carregar dashboard' });

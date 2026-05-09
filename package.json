@@ -16,6 +16,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.87.0",
     "bcryptjs": "^3.0.3",
+    "compression": "^1.8.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.0",
     "drizzle-orm": "^0.45.2",
@@ -24,11 +25,11 @@
     "node-cache": "^5.1.2",
     "nodemailer": "^8.0.5",
     "pg": "^8.20.0",
-    "resend": "^6.10.0",
-    "node-cache": "^5.1.2"
+    "resend": "^6.10.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
+    "@types/compression": "^1.8.1",
     "@types/express": "^5.0.6",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^24.12.2",
