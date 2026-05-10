@@ -10,6 +10,7 @@ const router = Router();
 
 // GET /dashboard — carrega todos os dados do app em uma única chamada
 router.get('/', async (req, res) => {
+  const t0 = Date.now();
   try {
     const uid = req.usuarioAutenticado?.id;
     const perfil = req.usuarioAutenticado?.perfil;
@@ -17,7 +18,10 @@ router.get('/', async (req, res) => {
 
     const cacheKey = `dash:${uid}:${isBiblio ? 'b' : 'u'}`;
     const cached = dashboardCache.get(cacheKey);
-    if (cached) return res.json(cached);
+    if (cached) {
+      console.log(`[dashboard] cache hit — ${Date.now() - t0}ms`);
+      return res.json(cached);
+    }
 
     const [
       todosEmprestimos,
@@ -102,6 +106,7 @@ router.get('/', async (req, res) => {
       suspensoes: suspensoeResult.rows,
     };
     dashboardCache.set(cacheKey, resultado);
+    console.log(`[dashboard] db query — ${Date.now() - t0}ms`);
     res.json(resultado);
   } catch (err) {
     console.error('[dashboard]', err);
