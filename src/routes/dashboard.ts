@@ -16,98 +16,87 @@ router.get('/', async (req, res) => {
     const perfil = req.usuarioAutenticado?.perfil;
     const isBiblio = !!perfil && !['aluno', 'professor'].includes(perfil);
 
-    const cacheKey = `dash:${uid}:${isBiblio ? 'b' : 'u'}`;
-    const cached = dashboardCache.get(cacheKey);
-    if (cached) {
+    // Dados compartilhados: mesmos para todos os usuários — 1 query a cada 30s no banco
+    let shared = dashboardCache.get<any>('dash:shared');
+    if (!shared) {
+      const [todosEmprestimos, todosLivros, todasAvaliacoes, todosComunicados, suspensoeResult] = await Promise.all([
+        db.select({
+          id: emprestimos.id,
+          usuarioId: emprestimos.usuarioId,
+          livroId: emprestimos.livroId,
+          status: emprestimos.status,
+          dataReserva: emprestimos.dataReserva,
+          dataDevolucao: emprestimos.dataDevolucao,
+          renovado: emprestimos.renovado,
+          livroTitulo: livros.titulo,
+          livroAutor: livros.autor,
+          livroGenero: livros.genero,
+          livroCapa: livros.capa,
+          usuarioNome: usuarios.nome,
+          usuarioTurma: usuarios.turma,
+          usuarioMatricula: usuarios.matricula,
+        })
+          .from(emprestimos)
+          .leftJoin(livros, eq(emprestimos.livroId, livros.id))
+          .leftJoin(usuarios, eq(emprestimos.usuarioId, usuarios.id)),
+
+        db.select({
+          id: livros.id,
+          titulo: livros.titulo,
+          autor: livros.autor,
+          isbn: livros.isbn,
+          genero: livros.genero,
+          capa: livros.capa,
+          prateleira: livros.prateleira,
+          totalExemplares: livros.totalExemplares,
+          disponiveis: livros.disponiveis,
+        }).from(livros),
+
+        db.select().from(avaliacoes),
+        db.select().from(comunicados).orderBy(comunicados.criadoEm),
+
+        pool.query(`
+          SELECT s.*, u.nome as usuario_nome, u.email as usuario_email,
+                 u.turma as usuario_turma, e.livro_id,
+                 l.titulo as livro_titulo
+          FROM suspensoes s
+          LEFT JOIN usuarios u ON s.usuario_id = u.id
+          LEFT JOIN emprestimos e ON s.emprestimo_id = e.id
+          LEFT JOIN livros l ON e.livro_id = l.id
+          WHERE s.expira_em > NOW()
+          ORDER BY s.criado_em DESC
+        `),
+      ]);
+
+      shared = {
+        livros: todosLivros,
+        emprestimos: todosEmprestimos.map(e => ({ ...e, status: calcularStatus(e as any) })),
+        avaliacoes: todasAvaliacoes,
+        comunicados: [...todosComunicados].reverse(),
+        suspensoes: suspensoeResult.rows,
+      };
+      dashboardCache.set('dash:shared', shared);
+      console.log(`[dashboard] db query — ${Date.now() - t0}ms`);
+    } else {
       console.log(`[dashboard] cache hit — ${Date.now() - t0}ms`);
-      return res.json(cached);
     }
 
-    const [
-      todosEmprestimos,
-      todosLivros,
-      todasAvaliacoes,
-      todosDesejos,
-      todosUsuarios,
-      todosComunicados,
-      suspensoeResult,
-    ] = await Promise.all([
-      db.select({
-        id: emprestimos.id,
-        usuarioId: emprestimos.usuarioId,
-        livroId: emprestimos.livroId,
-        status: emprestimos.status,
-        dataReserva: emprestimos.dataReserva,
-        dataDevolucao: emprestimos.dataDevolucao,
-        renovado: emprestimos.renovado,
-        livroTitulo: livros.titulo,
-        livroAutor: livros.autor,
-        livroGenero: livros.genero,
-        livroCapa: livros.capa,
-        usuarioNome: usuarios.nome,
-        usuarioTurma: usuarios.turma,
-        usuarioMatricula: usuarios.matricula,
-      })
-        .from(emprestimos)
-        .leftJoin(livros, eq(emprestimos.livroId, livros.id))
-        .leftJoin(usuarios, eq(emprestimos.usuarioId, usuarios.id)),
-
-      db.select({
-        id: livros.id,
-        titulo: livros.titulo,
-        autor: livros.autor,
-        isbn: livros.isbn,
-        genero: livros.genero,
-        capa: livros.capa,
-        prateleira: livros.prateleira,
-        totalExemplares: livros.totalExemplares,
-        disponiveis: livros.disponiveis,
-      }).from(livros),
-
-      db.select().from(avaliacoes),
-
-      uid
-        ? db.select().from(desejos).where(eq(desejos.usuarioId, Number(uid)))
-        : Promise.resolve([]),
-
+    // Dados por usuário: apenas desejos (query pequena) e lista de usuários para biblitecário
+    const [todosDesejos, todosUsuarios] = await Promise.all([
+      uid ? db.select().from(desejos).where(eq(desejos.usuarioId, Number(uid))) : Promise.resolve([]),
       isBiblio
-        ? db.select({
+        ? (dashboardCache.get<any>('dash:usuarios') ?? db.select({
             id: usuarios.id,
             nome: usuarios.nome,
             email: usuarios.email,
             matricula: usuarios.matricula,
             turma: usuarios.turma,
             perfil: usuarios.perfil,
-          }).from(usuarios)
+          }).from(usuarios).then(r => { dashboardCache.set('dash:usuarios', r); return r; }))
         : Promise.resolve([]),
-
-      db.select().from(comunicados).orderBy(comunicados.criadoEm),
-
-      pool.query(`
-        SELECT s.*, u.nome as usuario_nome, u.email as usuario_email,
-               u.turma as usuario_turma, e.livro_id,
-               l.titulo as livro_titulo
-        FROM suspensoes s
-        LEFT JOIN usuarios u ON s.usuario_id = u.id
-        LEFT JOIN emprestimos e ON s.emprestimo_id = e.id
-        LEFT JOIN livros l ON e.livro_id = l.id
-        WHERE s.expira_em > NOW()
-        ORDER BY s.criado_em DESC
-      `),
     ]);
 
-    const resultado = {
-      livros: todosLivros,
-      emprestimos: todosEmprestimos.map(e => ({ ...e, status: calcularStatus(e as any) })),
-      avaliacoes: todasAvaliacoes,
-      desejos: todosDesejos,
-      usuarios: todosUsuarios,
-      comunicados: [...todosComunicados].reverse(),
-      suspensoes: suspensoeResult.rows,
-    };
-    dashboardCache.set(cacheKey, resultado);
-    console.log(`[dashboard] db query — ${Date.now() - t0}ms`);
-    res.json(resultado);
+    res.json({ ...shared, desejos: todosDesejos, usuarios: todosUsuarios });
   } catch (err) {
     console.error('[dashboard]', err);
     res.status(500).json({ erro: 'Erro ao carregar dashboard' });
