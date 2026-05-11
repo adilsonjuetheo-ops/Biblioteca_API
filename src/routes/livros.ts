@@ -35,8 +35,10 @@ router.get('/', async (req, res) => {
         return res.json(cached);
       }
       const cacheObj = cached as { items: unknown[]; total: number };
-      if (incluirTotal) {
+      if (incluirTotal || limit > 0) {
         res.setHeader('X-Total-Count', String(cacheObj.total));
+        res.setHeader('X-Page', String(page));
+        res.setHeader('X-Limit', String(limit));
       }
       return res.json(cacheObj.items);
     }
