@@ -14,6 +14,8 @@ import marleneRouter from './routes/marlene';
 import scanLivroRouter from './routes/scan-livro';
 import dashboardRouter from './routes/dashboard';
 import { autenticar, autenticarBibliotecario } from './middleware/auth';
+import cron from 'node-cron';
+import { verificarPrazosEmprestimos } from './cron';
 
 dotenv.config();
 
@@ -166,6 +168,15 @@ app.use('/suspensoes', autenticar, (req: Request, res: Response, next: NextFunct
 // ── IA ──
 app.use('/api/marlene', autenticar, marleneRouter);
 app.use('/api/scan-livro', autenticarBibliotecario, scanLivroRouter);
+
+// ── Rota admin: disparo manual da verificação de prazos ──────────────────────
+app.post('/emprestimos/verificar-prazos', autenticarBibliotecario, async (_req, res) => {
+  await verificarPrazosEmprestimos();
+  res.json({ ok: true, mensagem: 'Verificação de prazos executada.' });
+});
+
+// ── Lembretes de prazo — roda todo dia às 8h (horário de Brasília) ───────────
+cron.schedule('0 8 * * *', verificarPrazosEmprestimos, { timezone: 'America/Sao_Paulo' });
 
 const PORT = process.env.PORT || 3000;
 
