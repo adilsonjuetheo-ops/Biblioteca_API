@@ -29,6 +29,7 @@ export async function verificarPrazosEmprestimos() {
       WHERE e.status = 'retirado'
         AND e.data_devolucao IS NOT NULL
         AND u.push_token IS NOT NULL
+        AND u.perfil IN ('aluno', 'professor')
     `);
 
     if (rows.length === 0) {
@@ -56,19 +57,26 @@ export async function verificarPrazosEmprestimos() {
           { tipo: 'vence_amanha', emprestimoId: emp.id },
         );
         contVenceAmanha++;
-      } else if (diffDias <= 0) {
-        const dias = Math.abs(diffDias);
-        const atraso =
-          dias === 0 ? 'venceu hoje' :
-          dias === 1 ? 'está 1 dia atrasado' :
-          `está ${dias} dias atrasado`;
+      } else if (diffDias === 0) {
         await enviarPush(
           emp.push_token,
-          'Livro em atraso',
-          `"${titulo}" ${atraso}. Devolva na biblioteca o quanto antes.`,
-          { tipo: 'atrasado', emprestimoId: emp.id },
+          'Devolução hoje',
+          `"${titulo}" deve ser devolvido hoje. Não esqueça de passar na biblioteca!`,
+          { tipo: 'vence_hoje', emprestimoId: emp.id },
         );
         contAtrasados++;
+      } else if (diffDias < 0) {
+        const dias = Math.abs(diffDias);
+        if (dias % 2 !== 0) {
+          const atraso = dias === 1 ? 'está 1 dia atrasado' : `está ${dias} dias atrasado`;
+          await enviarPush(
+            emp.push_token,
+            'Livro em atraso',
+            `"${titulo}" ${atraso}. Devolva na biblioteca o quanto antes.`,
+            { tipo: 'atrasado', emprestimoId: emp.id },
+          );
+          contAtrasados++;
+        }
       }
     }
 
