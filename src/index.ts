@@ -366,6 +366,16 @@ runMigrations()
     app.listen(PORT, () => {
       console.log('Servidor rodando na porta ' + PORT);
     });
+    // Pinga o Neon a cada 4 min em horário escolar (seg–sex, 7h–18h, Brasília)
+    // para evitar cold start do Neon sem consumir compute fora do horário de uso
+    setInterval(() => {
+      const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+      const weekday = now.getDay(); // 0=dom, 6=sab
+      const hour = now.getHours();
+      if (weekday >= 1 && weekday <= 5 && hour >= 7 && hour < 18) {
+        pool.query('SELECT 1').catch((e: Error) => console.error('[keepalive]', e.message));
+      }
+    }, 4 * 60 * 1000);
   })
   .catch((err) => {
     console.error('Falha nas migrations — servidor não iniciado:', err);
