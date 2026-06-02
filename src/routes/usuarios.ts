@@ -105,6 +105,7 @@ router.post('/', async (req, res) => {
     });
     res.status(201).json(novo[0]);
   } catch (err) {
+    console.error('[POST /usuarios] erro ao criar usuario:', err);
     res.status(500).json({ erro: 'Erro ao criar usuario' });
   }
 });

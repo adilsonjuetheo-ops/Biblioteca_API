@@ -12,7 +12,6 @@ const CAMPOS_LISTA = {
     autor: schema_1.livros.autor,
     isbn: schema_1.livros.isbn,
     genero: schema_1.livros.genero,
-    sinopse: schema_1.livros.sinopse,
     capa: schema_1.livros.capa,
     prateleira: schema_1.livros.prateleira,
     totalExemplares: schema_1.livros.totalExemplares,
@@ -34,8 +33,10 @@ router.get('/', async (req, res) => {
                 return res.json(cached);
             }
             const cacheObj = cached;
-            if (incluirTotal) {
+            if (incluirTotal || limit > 0) {
                 res.setHeader('X-Total-Count', String(cacheObj.total));
+                res.setHeader('X-Page', String(page));
+                res.setHeader('X-Limit', String(limit));
             }
             return res.json(cacheObj.items);
         }
@@ -107,7 +108,7 @@ router.post('/', async (req, res) => {
             totalExemplares: total,
             disponiveis: total,
         }).returning();
-        cache_1.livrosCache.flushAll();
+        (0, cache_1.flushAllCaches)();
         res.status(201).json(novo[0]);
     }
     catch (err) {
@@ -134,7 +135,7 @@ router.put('/:id', async (req, res) => {
         if (!atualizado.length) {
             return res.status(404).json({ erro: 'Livro não encontrado' });
         }
-        cache_1.livrosCache.flushAll();
+        (0, cache_1.flushAllCaches)();
         res.json(atualizado[0]);
     }
     catch (err) {
@@ -158,7 +159,7 @@ router.patch('/:id', async (req, res) => {
         })
             .where((0, drizzle_orm_1.eq)(schema_1.livros.id, Number(req.params.id)))
             .returning();
-        cache_1.livrosCache.flushAll();
+        (0, cache_1.flushAllCaches)();
         res.json(atualizado[0]);
     }
     catch (err) {
@@ -180,7 +181,7 @@ router.delete('/:id', async (req, res) => {
             });
         }
         await connection_1.db.delete(schema_1.livros).where((0, drizzle_orm_1.eq)(schema_1.livros.id, Number(req.params.id)));
-        cache_1.livrosCache.flushAll();
+        (0, cache_1.flushAllCaches)();
         res.json({ mensagem: 'Livro removido com sucesso' });
     }
     catch (err) {

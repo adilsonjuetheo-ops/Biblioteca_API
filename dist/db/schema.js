@@ -10,6 +10,7 @@ exports.usuarios = (0, pg_core_1.pgTable)('usuarios', {
     matricula: (0, pg_core_1.text)('matricula'),
     turma: (0, pg_core_1.text)('turma'),
     perfil: (0, pg_core_1.text)('perfil').notNull().default('aluno'),
+    pushToken: (0, pg_core_1.text)('push_token'),
     criadoEm: (0, pg_core_1.timestamp)('criado_em').defaultNow(),
 });
 exports.livros = (0, pg_core_1.pgTable)('livros', {

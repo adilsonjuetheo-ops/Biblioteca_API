@@ -101,6 +101,7 @@ router.post('/', async (req, res) => {
         res.status(201).json(novo[0]);
     }
     catch (err) {
+        console.error('[POST /usuarios] erro ao criar usuario:', err);
         res.status(500).json({ erro: 'Erro ao criar usuario' });
     }
 });
@@ -431,6 +432,21 @@ router.get('/deletar-conta', (_req, res) => {
 </html>`;
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(html);
+});
+router.post('/push-token', auth_1.autenticar, async (req, res) => {
+    try {
+        const { token } = req.body;
+        if (!token || typeof token !== 'string') {
+            return res.status(400).json({ erro: 'token é obrigatório' });
+        }
+        await connection_1.db.update(schema_1.usuarios)
+            .set({ pushToken: token })
+            .where((0, drizzle_orm_1.eq)(schema_1.usuarios.id, req.usuarioAutenticado.id));
+        res.json({ ok: true });
+    }
+    catch (err) {
+        res.status(500).json({ erro: 'Erro ao salvar push token' });
+    }
 });
 router.delete('/deletar-conta', auth_1.autenticar, async (req, res) => {
     try {

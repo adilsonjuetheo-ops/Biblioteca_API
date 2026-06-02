@@ -8,6 +8,11 @@ const router = (0, express_1.Router)();
 router.get('/', async (req, res) => {
     try {
         const { usuarioId, livroId } = req.query;
+        const filtros = [];
+        if (usuarioId)
+            filtros.push((0, drizzle_orm_1.eq)(schema_1.avaliacoes.usuarioId, Number(usuarioId)));
+        if (livroId)
+            filtros.push((0, drizzle_orm_1.eq)(schema_1.avaliacoes.livroId, Number(livroId)));
         let query = connection_1.db
             .select({
             id: schema_1.avaliacoes.id,
@@ -21,16 +26,11 @@ router.get('/', async (req, res) => {
         })
             .from(schema_1.avaliacoes)
             .leftJoin(schema_1.usuarios, (0, drizzle_orm_1.eq)(schema_1.avaliacoes.usuarioId, schema_1.usuarios.id))
-            .leftJoin(schema_1.livros, (0, drizzle_orm_1.eq)(schema_1.avaliacoes.livroId, schema_1.livros.id));
-        const rows = await query;
-        const filtered = rows.filter((r) => {
-            if (usuarioId && String(r.usuarioId) !== String(usuarioId))
-                return false;
-            if (livroId && String(r.livroId) !== String(livroId))
-                return false;
-            return true;
-        });
-        res.json(filtered);
+            .leftJoin(schema_1.livros, (0, drizzle_orm_1.eq)(schema_1.avaliacoes.livroId, schema_1.livros.id))
+            .$dynamic();
+        if (filtros.length)
+            query = query.where((0, drizzle_orm_1.and)(...filtros));
+        res.json(await query);
     }
     catch {
         res.status(500).json({ erro: 'Erro ao buscar avaliações' });

@@ -10,6 +10,13 @@ const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const pool = new pg_1.Pool({
     connectionString: process.env.DATABASE_URL,
+    min: 1,
+    max: 10,
+    idleTimeoutMillis: 20000,
+    connectionTimeoutMillis: 10000,
 });
 exports.pool = pool;
+pool.on('error', (err) => {
+    console.error('[pool] idle client error:', err.message);
+});
 exports.db = (0, node_postgres_1.drizzle)(pool);

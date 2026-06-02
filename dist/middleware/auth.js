@@ -7,7 +7,9 @@ exports.gerarToken = gerarToken;
 exports.autenticar = autenticar;
 exports.autenticarBibliotecario = autenticarBibliotecario;
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
-const JWT_SECRET = process.env.JWT_SECRET || 'biblioteca_secret_key';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET)
+    throw new Error('JWT_SECRET não definido nas variáveis de ambiente');
 function gerarToken(payload) {
     return jsonwebtoken_1.default.sign(payload, JWT_SECRET, { expiresIn: '30d' });
 }

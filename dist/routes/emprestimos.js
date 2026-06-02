@@ -3,6 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.calcularStatus = calcularStatus;
 const express_1 = require("express");
 const connection_1 = require("../db/connection");
 const schema_1 = require("../db/schema");
@@ -64,6 +65,10 @@ router.get('/', async (req, res) => {
         const usuarioId = Number(req.query.usuarioId) || 0;
         const turma = String(req.query.turma || '').trim();
         const livroId = Number(req.query.livroId) || 0;
+        const cacheKey = `emp:p${page}:l${limit}:s${busca}:st${status}:u${usuarioId}:t${turma}:lv${livroId}`;
+        const cached = cache_1.emprestimosCache.get(cacheKey);
+        if (cached)
+            return res.json(cached);
         const filtros = [];
         if (usuarioId > 0)
             filtros.push((0, drizzle_orm_1.eq)(schema_1.emprestimos.usuarioId, usuarioId));
@@ -118,10 +123,25 @@ router.get('/', async (req, res) => {
             res.setHeader('X-Page', String(page));
             res.setHeader('X-Limit', String(limit));
         }
+        cache_1.emprestimosCache.set(cacheKey, todos);
         res.json(todos);
     }
     catch (err) {
         res.status(500).json({ erro: 'Erro ao buscar empréstimos' });
+    }
+});
+router.get('/:id/status', async (req, res) => {
+    try {
+        const resultado = await connection_1.db.select({
+            status: schema_1.emprestimos.status,
+            dataDevolucao: schema_1.emprestimos.dataDevolucao,
+        }).from(schema_1.emprestimos).where((0, drizzle_orm_1.eq)(schema_1.emprestimos.id, Number(req.params.id)));
+        if (!resultado.length)
+            return res.status(404).json({ erro: 'Empréstimo não encontrado' });
+        res.json({ status: calcularStatus(resultado[0]) });
+    }
+    catch (err) {
+        res.status(500).json({ erro: 'Erro ao buscar status' });
     }
 });
 router.post('/', async (req, res) => {
@@ -149,7 +169,7 @@ router.post('/', async (req, res) => {
         await connection_1.db.update(schema_1.livros)
             .set({ disponiveis: (0, drizzle_orm_1.sql) `GREATEST(${schema_1.livros.disponiveis} - 1, 0)` })
             .where((0, drizzle_orm_1.eq)(schema_1.livros.id, Number(livroId)));
-        cache_1.livrosCache.flushAll();
+        (0, cache_1.flushAllCaches)();
         const detalhado = await buscarEmprestimoDetalhado(novo[0].id);
         res.status(201).json(detalhado);
     }
@@ -176,7 +196,7 @@ router.post('/reparar-orfaos', async (req, res) => {
         }
         // Remove os órfãos
         await connection_2.pool.query(`DELETE FROM emprestimos WHERE usuario_id IS NULL`);
-        cache_1.livrosCache.flushAll();
+        (0, cache_1.flushAllCaches)();
         res.json({
             reparados: orfaos.rows.length,
             mensagem: `${orfaos.rows.length} empréstimo(s) sem dono removido(s) e exemplares devolvidos ao acervo.`,
@@ -217,7 +237,7 @@ router.patch('/retirada-qr', async (req, res) => {
            retirada_qr_usado_em = NOW(),
            retirada_qr_codigo = NULL
        WHERE id = $1`, [emp.id, dataDevolucao]);
-        cache_1.livrosCache.flushAll();
+        (0, cache_1.flushAllCaches)();
         res.json({
             ok: true,
             emprestimo: {
@@ -250,7 +270,7 @@ router.patch('/:id/devolver', async (req, res) => {
         await connection_1.db.update(schema_1.livros)
             .set({ disponiveis: (0, drizzle_orm_1.sql) `LEAST(${schema_1.livros.disponiveis} + 1, ${schema_1.livros.totalExemplares})` })
             .where((0, drizzle_orm_1.eq)(schema_1.livros.id, emp[0].livroId));
-        cache_1.livrosCache.flushAll();
+        (0, cache_1.flushAllCaches)();
         const detalhado = await buscarEmprestimoDetalhado(id);
         res.json(detalhado);
     }
@@ -343,7 +363,7 @@ router.delete('/:id', auth_1.autenticarBibliotecario, async (req, res) => {
                 .where((0, drizzle_orm_1.eq)(schema_1.livros.id, emp.livroId));
         }
         await connection_1.db.delete(schema_1.emprestimos).where((0, drizzle_orm_1.eq)(schema_1.emprestimos.id, id));
-        cache_1.livrosCache.flushAll();
+        (0, cache_1.flushAllCaches)();
         res.json({ mensagem: 'Empréstimo excluído com sucesso', id });
     }
     catch (err) {
