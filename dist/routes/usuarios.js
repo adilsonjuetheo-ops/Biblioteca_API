@@ -139,11 +139,14 @@ router.post('/login', async (req, res) => {
         const emailNormalizado = email.toLowerCase().trim();
         const resultado = await connection_1.db.select().from(schema_1.usuarios).where((0, drizzle_orm_1.eq)(schema_1.usuarios.email, emailNormalizado));
         if (resultado.length === 0) {
+            console.log('[login] usuario nao encontrado:', emailNormalizado);
             return res.status(401).json({ erro: 'E-mail ou senha incorretos' });
         }
         const usuario = resultado[0];
         const senhaCorreta = await bcryptjs_1.default.compare(senha, usuario.senha);
         if (!senhaCorreta) {
+            const isBcrypt = usuario.senha.startsWith('$2b$') || usuario.senha.startsWith('$2a$');
+            console.log('[login] senha incorreta para:', emailNormalizado, '| senha_no_banco_e_bcrypt:', isBcrypt, '| tamanho_hash:', usuario.senha.length);
             return res.status(401).json({ erro: 'E-mail ou senha incorretos' });
         }
         const token = (0, auth_1.gerarToken)({ id: usuario.id, email: usuario.email, perfil: usuario.perfil });
