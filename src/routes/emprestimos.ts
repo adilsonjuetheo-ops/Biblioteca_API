@@ -187,6 +187,58 @@ router.post('/', async (req, res) => {
   }
 });
 
+// Empréstimo manual registrado pela bibliotecária em nome de um aluno
+// (alunos sem celular não conseguem reservar pelo app). Nasce direto como
+// 'retirado', pois o livro é entregue na hora.
+router.post('/manual', autenticarBibliotecario, async (req, res) => {
+  try {
+    const { usuarioId, livroId } = req.body;
+    if (!usuarioId || !livroId) {
+      return res.status(400).json({ erro: 'usuarioId e livroId são obrigatórios' });
+    }
+
+    const resultadoUsuario = await db.select({ id: usuarios.id })
+      .from(usuarios).where(eq(usuarios.id, Number(usuarioId)));
+    if (!resultadoUsuario.length) {
+      return res.status(404).json({ erro: 'Usuário não encontrado' });
+    }
+
+    const resultadoLivro = await db.select({
+      id: livros.id,
+      disponiveis: livros.disponiveis,
+    }).from(livros).where(eq(livros.id, Number(livroId)));
+    if (!resultadoLivro.length) {
+      return res.status(404).json({ erro: 'Livro não encontrado' });
+    }
+    if ((resultadoLivro[0].disponiveis || 0) <= 0) {
+      return res.status(400).json({ erro: 'Não há exemplares disponíveis' });
+    }
+
+    const dataRetirada = new Date();
+    const dataDevolucao = new Date();
+    dataDevolucao.setDate(dataDevolucao.getDate() + 8);
+
+    const novo = await db.insert(emprestimos)
+      .values({
+        usuarioId: Number(usuarioId),
+        livroId: Number(livroId),
+        status: 'retirado',
+        dataRetirada,
+        dataDevolucao,
+      })
+      .returning({ id: emprestimos.id });
+    await db.update(livros)
+      .set({ disponiveis: sql`GREATEST(${livros.disponiveis} - 1, 0)` })
+      .where(eq(livros.id, Number(livroId)));
+
+    flushAllCaches();
+    const detalhado = await buscarEmprestimoDetalhado(novo[0].id);
+    res.status(201).json(detalhado);
+  } catch (err) {
+    res.status(500).json({ erro: 'Erro ao registrar empréstimo manual' });
+  }
+});
+
 // Reparo: remove empréstimos sem usuário (usuarioId NULL) e restaura exemplares
 router.post('/reparar-orfaos', async (req, res) => {
   if (req.usuarioAutenticado?.perfil !== 'bibliotecario') {
